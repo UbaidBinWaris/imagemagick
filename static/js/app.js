@@ -1,6 +1,7 @@
 class ImageProcessor {
     constructor() {
         this.BACKEND_URL = window.location.protocol + '//' + window.location.host;
+        this.API_KEY = this.getStoredApiKey();
         this.init();
     }
 
@@ -8,6 +9,85 @@ class ImageProcessor {
         this.setupEventListeners();
         this.checkHealth();
         this.toggleAdvancedOptions(); // Initialize text group visibility
+        this.setupApiKeyInterface();
+    }
+
+    getStoredApiKey() {
+        return localStorage.getItem('imagemagick_api_key') || '';
+    }
+
+    setApiKey(apiKey) {
+        this.API_KEY = apiKey;
+        if (apiKey) {
+            localStorage.setItem('imagemagick_api_key', apiKey);
+        } else {
+            localStorage.removeItem('imagemagick_api_key');
+        }
+        this.updateApiKeyDisplay();
+    }
+
+    setupApiKeyInterface() {
+        // Add API key input section if it doesn't exist
+        const container = document.querySelector('.container');
+        const header = container.querySelector('.header');
+        
+        if (!document.getElementById('apiKeySection')) {
+            const apiKeySection = document.createElement('div');
+            apiKeySection.id = 'apiKeySection';
+            apiKeySection.className = 'api-key-section';
+            apiKeySection.innerHTML = `
+                <div class="api-key-controls" style="display: none;">
+                    <h3>🔐 API Authentication</h3>
+                    <div class="api-key-input-group">
+                        <input type="password" id="apiKeyInput" placeholder="Enter your API key..." />
+                        <button type="button" id="saveApiKeyBtn" class="btn btn-primary">Save</button>
+                        <button type="button" id="clearApiKeyBtn" class="btn btn-secondary">Clear</button>
+                    </div>
+                    <div class="api-key-status" id="apiKeyStatus">
+                        <span id="apiKeyStatusText">No API key configured</span>
+                    </div>
+                </div>
+            `;
+            
+            header.insertAdjacentElement('afterend', apiKeySection);
+        }
+        
+        this.updateApiKeyDisplay();
+    }
+
+    updateApiKeyDisplay() {
+        const apiKeySection = document.getElementById('apiKeySection');
+        const apiKeyControls = apiKeySection?.querySelector('.api-key-controls');
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        const apiKeyStatusText = document.getElementById('apiKeyStatusText');
+        
+        if (this.API_KEY) {
+            if (apiKeyInput) apiKeyInput.value = this.API_KEY;
+            if (apiKeyStatusText) {
+                apiKeyStatusText.textContent = `API key configured (${this.API_KEY.substring(0, 8)}...)`;
+                apiKeyStatusText.className = 'api-key-configured';
+            }
+        } else {
+            if (apiKeyInput) apiKeyInput.value = '';
+            if (apiKeyStatusText) {
+                apiKeyStatusText.textContent = 'No API key configured';
+                apiKeyStatusText.className = 'api-key-missing';
+            }
+        }
+    }
+
+    showApiKeyControls() {
+        const apiKeyControls = document.querySelector('.api-key-controls');
+        if (apiKeyControls) {
+            apiKeyControls.style.display = 'block';
+        }
+    }
+
+    hideApiKeyControls() {
+        const apiKeyControls = document.querySelector('.api-key-controls');
+        if (apiKeyControls) {
+            apiKeyControls.style.display = 'none';
+        }
     }
 
     setupEventListeners() {
@@ -37,22 +117,64 @@ class ImageProcessor {
         document.querySelector('.advanced-options h3').addEventListener('click', () => {
             this.toggleAdvanced();
         });
+
+        // API key controls
+        document.addEventListener('click', (e) => {
+            if (e.target.id === 'saveApiKeyBtn') {
+                const apiKey = document.getElementById('apiKeyInput').value.trim();
+                this.setApiKey(apiKey);
+                this.showStatus('API key saved');
+            } else if (e.target.id === 'clearApiKeyBtn') {
+                this.setApiKey('');
+                this.showStatus('API key cleared');
+            }
+        });
+    }
+
+    getHeaders() {
+        const headers = {};
+        if (this.API_KEY) {
+            headers['X-API-Key'] = this.API_KEY;
+        }
+        return headers;
     }
 
     async checkHealth() {
         try {
-            const response = await fetch(`${this.BACKEND_URL}/health`);
+            const response = await fetch(`${this.BACKEND_URL}/health`, {
+                headers: this.getHeaders()
+            });
             const data = await response.json();
             
             const healthStatus = document.getElementById('healthStatus');
             const installInstructions = document.getElementById('installInstructions');
             const processBtn = document.getElementById('processBtn');
             
+            if (response.status === 401) {
+                // API key required but not provided or invalid
+                healthStatus.textContent = '🔐 Auth Required';
+                healthStatus.className = 'health-status warning';
+                this.showApiKeyControls();
+                processBtn.disabled = true;
+                this.showError('API key authentication required. Please configure your API key.');
+                return;
+            }
+            
             if (data.status === 'healthy' && data.imagemagick_installed) {
                 healthStatus.textContent = '✅ Ready';
                 healthStatus.className = 'health-status healthy';
                 installInstructions.style.display = 'none';
                 processBtn.disabled = false;
+                
+                // Show auth status if API auth is enabled
+                if (data.api_auth_enabled) {
+                    this.showApiKeyControls();
+                    if (data.authenticated_as) {
+                        this.showStatus(`Authenticated as: ${data.authenticated_as}`);
+                    }
+                } else {
+                    this.hideApiKeyControls();
+                }
             } else if (data.status === 'healthy' && !data.imagemagick_installed) {
                 healthStatus.textContent = '⚠️ ImageMagick Missing';
                 healthStatus.className = 'health-status warning';
@@ -182,7 +304,12 @@ class ImageProcessor {
             const response = await fetch(`${this.BACKEND_URL}/process`, {
                 method: 'POST',
                 body: formData,
+                headers: this.getHeaders()
             });
+
+            if (response.status === 401) {
+                throw new Error('Authentication required. Please check your API key.');
+            }
 
             if (!response.ok) {
                 const errorData = await response.json();

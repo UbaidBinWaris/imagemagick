@@ -1,0 +1,17 @@
+{
+  "4df65959407bc4db": {
+    "name": "Demo Key",
+    "key_hash": "bfd6e248c2cb4c2601ae1836b45c914f718536acbc408f7f8a4b57f02a825127",
+    "salt": "0f73c4c94c63c5013fd2f2e3628e43aa8859c8f3bf580520f01f3180b3f4d7ca",
+    "permissions": [
+      "process",
+      "health",
+      "admin"
+    ],
+    "created_at": "2025-09-03 02:57:59.196444",
+    "expires_at": null,
+    "last_used": "2025-09-03 03:01:33.699723",
+    "usage_count": 1,
+    "active": true
+  }
+}

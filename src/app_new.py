@@ -1,5 +1,5 @@
 """
-Modular ImageMagick Web Application
+Modular ImageMagick Web Application with API Key Authentication
 """
 import os
 import subprocess
@@ -10,14 +10,15 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from datetime import datetime
 
-from config import config, Config
-from utils import (
+from .config import config, Config
+from .utils import (
     allowed_file, 
     check_imagemagick, 
     build_imagemagick_command, 
     cleanup_files,
     validate_processing_params
 )
+from .auth import APIKeyManager, require_api_key
 
 def create_app(config_name=None):
     """Application factory"""
@@ -27,11 +28,15 @@ def create_app(config_name=None):
     config_name = config_name or os.getenv('FLASK_ENV', 'default')
     app.config.from_object(config[config_name])
     
-    # Enable CORS
-    CORS(app)
+    # Enable CORS with security considerations
+    CORS(app, origins=app.config.get('CORS_ORIGINS', ['*']))
     
     # Setup logging
-    logging.basicConfig(level=logging.INFO)
+    log_level = getattr(logging, app.config.get('LOG_LEVEL', 'INFO'))
+    logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Initialize API key manager
+    app.api_manager = APIKeyManager(app.config.get('API_KEYS_FILE', 'api_keys.json'))
     
     # Create directories
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -53,15 +58,41 @@ def register_routes(app):
 
     @app.route('/health', methods=['GET'])
     def health_check():
-        """Health check endpoint"""
+        """Health check endpoint - optionally requires API key"""
+        # Apply API key requirement if configured
+        if app.config.get('API_KEY_REQUIRED', False):
+            return _health_check_with_auth()
+        else:
+            return _health_check_no_auth()
+
+    def _health_check_with_auth():
+        """Health check with API key authentication"""
+        @require_api_key('health')
+        def health_endpoint():
+            return _get_health_status()
+        return health_endpoint()
+
+    def _health_check_no_auth():
+        """Health check without authentication"""
+        return _get_health_status()
+
+    def _get_health_status():
+        """Get health status information"""
         try:
             imagemagick_installed, magick_cmd = check_imagemagick()
-            return jsonify({
+            health_data = {
                 'status': 'healthy',
                 'imagemagick_installed': imagemagick_installed,
                 'magick_command': magick_cmd,
-                'timestamp': datetime.now().isoformat()
-            })
+                'timestamp': datetime.now().isoformat(),
+                'api_auth_enabled': app.config.get('API_KEY_REQUIRED', False)
+            }
+            
+            # Add API key info if authenticated
+            if hasattr(request, 'api_key_data'):
+                health_data['authenticated_as'] = request.api_key_data['name']
+            
+            return jsonify(health_data)
         except Exception as e:
             app.logger.error(f"Health check error: {e}")
             return jsonify({
@@ -72,11 +103,16 @@ def register_routes(app):
             }), 500
 
     @app.route('/process', methods=['POST'])
+    @require_api_key('process')  # Always require API key for processing
     def process_image():
         """Process uploaded image with selected action"""
         input_path = None
         
         try:
+            # Log API request if enabled
+            if app.config.get('LOG_API_REQUESTS', True):
+                app.logger.info(f"Image processing request from API key: {request.api_key_data['name']}")
+            
             # Check ImageMagick installation
             imagemagick_installed, magick_cmd = check_imagemagick()
             if not imagemagick_installed:
@@ -117,6 +153,53 @@ def register_routes(app):
         finally:
             # Clean up temporary files
             cleanup_files(input_path)
+
+    @app.route('/api/keys', methods=['GET'])
+    @require_api_key('admin')
+    def list_api_keys():
+        """List API keys (admin only)"""
+        try:
+            keys = app.api_manager.list_api_keys()
+            return jsonify({'api_keys': keys})
+        except Exception as e:
+            app.logger.error(f"Error listing API keys: {e}")
+            return jsonify({'error': 'Failed to list API keys'}), 500
+
+    @app.route('/api/keys', methods=['POST'])
+    @require_api_key('admin')
+    def create_api_key():
+        """Create new API key (admin only)"""
+        try:
+            data = request.get_json()
+            if not data or 'name' not in data:
+                return jsonify({'error': 'Name is required'}), 400
+            
+            key_info = app.api_manager.generate_api_key(
+                name=data['name'],
+                permissions=data.get('permissions', ['process', 'health']),
+                expires_days=data.get('expires_days')
+            )
+            
+            return jsonify({
+                'message': 'API key created successfully',
+                'key_info': key_info
+            }), 201
+        except Exception as e:
+            app.logger.error(f"Error creating API key: {e}")
+            return jsonify({'error': 'Failed to create API key'}), 500
+
+    @app.route('/api/keys/<key_id>', methods=['DELETE'])
+    @require_api_key('admin')
+    def revoke_api_key(key_id):
+        """Revoke API key (admin only)"""
+        try:
+            if app.api_manager.revoke_api_key(key_id):
+                return jsonify({'message': f'API key {key_id} revoked successfully'})
+            else:
+                return jsonify({'error': 'API key not found'}), 404
+        except Exception as e:
+            app.logger.error(f"Error revoking API key: {e}")
+            return jsonify({'error': 'Failed to revoke API key'}), 500
 
 def register_error_handlers(app):
     """Register error handlers"""

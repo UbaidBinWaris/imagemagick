@@ -36,6 +36,27 @@ class Config:
         'text_position': 'Center',
         'blur_radius': '0x1'
     }
+    
+    # Security settings
+    API_KEY_REQUIRED = os.environ.get('API_KEY_REQUIRED', 'false').lower() == 'true'
+    DISABLE_API_AUTH = os.environ.get('DISABLE_API_AUTH', 'false').lower() == 'true'
+    API_KEYS_FILE = os.environ.get('API_KEYS_FILE', 'api_keys.json')
+    
+    # Rate limiting (requests per hour per API key)
+    RATE_LIMIT_REQUESTS = int(os.environ.get('RATE_LIMIT_REQUESTS', 1000))
+    RATE_LIMIT_WINDOW = int(os.environ.get('RATE_LIMIT_WINDOW', 3600))  # seconds
+    
+    # Request signature validation (for high-security environments)
+    REQUIRE_SIGNATURE = os.environ.get('REQUIRE_SIGNATURE', 'false').lower() == 'true'
+    SIGNATURE_SECRET = os.environ.get('SIGNATURE_SECRET') or 'default-signature-secret-change-in-production'
+    SIGNATURE_TOLERANCE = int(os.environ.get('SIGNATURE_TOLERANCE', 300))  # seconds
+    
+    # CORS settings
+    CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*').split(',')
+    
+    # Logging
+    LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
+    LOG_API_REQUESTS = os.environ.get('LOG_API_REQUESTS', 'true').lower() == 'true'
 
 class DevelopmentConfig(Config):
     """Development configuration"""

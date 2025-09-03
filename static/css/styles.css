@@ -307,6 +307,62 @@ body {
     color: #856404;
 }
 
+/* API Key Section */
+.api-key-section {
+    background: #e3f2fd;
+    border: 1px solid #bbdefb;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 25px;
+}
+
+.api-key-section h3 {
+    color: #1565c0;
+    margin-bottom: 15px;
+    font-size: 1.1em;
+}
+
+.api-key-input-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+    align-items: center;
+}
+
+.api-key-input-group input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: monospace;
+}
+
+.api-key-input-group button {
+    padding: 10px 20px;
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.api-key-status {
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.api-key-configured {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.api-key-missing {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
 /* Install Instructions */
 .install-instructions {
     background: #e3f2fd;

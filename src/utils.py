@@ -4,7 +4,7 @@ Utility functions for the ImageMagick Web Application
 import os
 import subprocess
 import logging
-from config import Config
+from .config import Config
 
 logger = logging.getLogger(__name__)
 
