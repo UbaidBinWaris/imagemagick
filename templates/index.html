@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ImageMagick Web Tool</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="health-status" id="healthStatus">Checking...</div>
+        <div class="header">
+            <h1>🎨 Image Processor</h1>
+            <p>Transform your images with powerful ImageMagick processing</p>
+        </div>
+        <div class="status-message" id="statusMessage"></div>
+        <div class="error-message" id="errorMessage"></div>
+        
+        <div class="install-instructions" id="installInstructions">
+            <h3>📋 ImageMagick Installation Required</h3>
+            <p>To use this image processor, you need to install ImageMagick first:</p>
+            <ol>
+                <li>Download ImageMagick from <a href="https://imagemagick.org/script/download.php#windows" target="_blank">https://imagemagick.org/script/download.php#windows</a></li>
+                <li>Choose the Windows binary release (e.g., ImageMagick-7.1.1-Q16-HDRI-x64-dll.exe)</li>
+                <li>Run the installer with administrator privileges</li>
+                <li>Make sure to check "Install development headers and libraries for C and C++" during installation</li>
+                <li>Restart your command prompt/PowerShell</li>
+                <li>Refresh this page to check if ImageMagick is detected</li>
+            </ol>
+            <p><strong>Alternative:</strong> If you have Chocolatey installed, run: <code>choco install imagemagick</code> (as administrator)</p>
+        </div>
+        
+        <div class="upload-section">
+            <div class="file-input-wrapper">
+                <input type="file" id="imageInput" class="file-input" accept="image/*" />
+                <label for="imageInput" class="file-input-button">
+                    📁 Choose Image File
+                </label>
+            </div>
+            <p style="margin-top: 10px; color: #666;">Supported formats: PNG, JPG, JPEG, GIF, BMP, TIFF, WebP (Max: 16MB)</p>
+        </div>
+        
+        <div class="controls-grid">
+            <div class="control-group">
+                <label for="action">🔧 Processing Action:</label>
+                <select id="action" onchange="toggleAdvancedOptions()">
+                    <option value="resize">Resize Image</option>
+                    <option value="grayscale">Convert to Grayscale</option>
+                    <option value="rotate">Rotate Image</option>
+                    <option value="text" selected>Add Text Overlay</option>
+                    <option value="blur">Apply Blur Effect</option>
+                    <option value="sharpen">Sharpen Image</option>
+                    <option value="sepia">Sepia Tone</option>
+                    <option value="negative">Negative Effect</option>
+                    <option value="flip">Flip Vertically</option>
+                    <option value="flop">Flip Horizontally</option>
+                </select>
+            </div>
+            <div class="control-group" id="textGroup" style="display: block;">
+                <label for="textInput">✏️ Text to Add:</label>
+                <input type="text" id="textInput" placeholder="Enter your text here..." />
+            </div>
+        </div>
+        
+        <div class="advanced-options" id="advancedOptions">
+            <h3 onclick="toggleAdvanced()">
+                ⚙️ Advanced Options 
+                <span class="toggle-icon">▶</span>
+            </h3>
+            <div class="advanced-options-content">
+                <div class="control-group">
+                    <label for="resizePercentage">Resize %:</label>
+                    <input type="number" id="resizePercentage" value="50" min="1" max="200" />
+                </div>
+                <div class="control-group">
+                    <label for="rotationAngle">Rotation Angle:</label>
+                    <input type="number" id="rotationAngle" value="90" min="-360" max="360" />
+                </div>
+                <div class="control-group">
+                    <label for="textSize">Text Size:</label>
+                    <input type="number" id="textSize" value="120" min="8" max="200" />
+                </div>
+                <div class="control-group">
+                    <label for="textColor">Text Color:</label>
+                    <select id="textColor">
+                        <option value="white">White</option>
+                        <option value="black" selected>Black</option>
+                        <option value="red">Red</option>
+                        <option value="blue">Blue</option>
+                        <option value="green">Green</option>
+                        <option value="yellow">Yellow</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="textFont">Font Family:</label>
+                    <select id="textFont">
+                        <option value="Arial" selected>Arial</option>
+                        <option value="Times-New-Roman">Times New Roman</option>
+                        <option value="Helvetica">Helvetica</option>
+                        <option value="Courier">Courier</option>
+                        <option value="Georgia">Georgia</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="textPosition">Text Position:</label>
+                    <select id="textPosition">
+                        <option value="Center" selected>Center</option>
+                        <option value="North">Top</option>
+                        <option value="South">Bottom</option>
+                        <option value="East">Right</option>
+                        <option value="West">Left</option>
+                        <option value="NorthEast">Top Right</option>
+                        <option value="NorthWest">Top Left</option>
+                        <option value="SouthEast">Bottom Right</option>
+                        <option value="SouthWest">Bottom Left</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        
+        <div class="button-group">
+            <button class="btn btn-primary" onclick="processImage()">
+                🚀 Process Image
+            </button>
+            <button class="btn btn-secondary" onclick="resetForm()">
+                🔄 Reset
+            </button>
+        </div>
+        
+        <div class="results-section" id="resultsSection" style="display: none;">
+            <div class="image-container">
+                <h3>📤 Original Image</h3>
+                <div id="originalImageContainer"></div>
+            </div>
+            <div class="image-container">
+                <h3>📥 Processed Image</h3>
+                <div id="processedImageContainer"></div>
+                <div id="downloadSection" style="display: none; margin-top: 15px;">
+                    <button class="btn btn-primary" onclick="downloadImage()">
+                        💾 Download Processed Image
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

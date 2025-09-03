@@ -3,15 +3,55 @@ import subprocess
 import logging
 import uuid
 import base64
-from flask import Flask, request, jsonify, send_file
+import hashlib
+import hmac
+import secrets
+import time
+from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
-from datetime import datetime
+from werkzeug.security import check_password_hash, generate_password_hash
+from datetime import datetime, timedelta
 from io import BytesIO
+from functools import wraps
+import jwt
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # --- Flask and Application Configuration ---
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
+
+# Security Configuration from environment variables
+SECRET_KEY = os.getenv('SECRET_KEY', secrets.token_hex(32))
+API_KEY = os.getenv('API_KEY', 'ZWIHZc5e-SWR-XdIPykAZ3K6PncdnwBxa9VlZ9yuZ3M')
+JWT_SECRET = os.getenv('JWT_SECRET', secrets.token_hex(32))
+app.config['SECRET_KEY'] = SECRET_KEY
+
+# Rate limiting
+try:
+    # Try to use Redis for rate limiting if available
+    import redis
+    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    limiter = Limiter(
+        key_func=get_remote_address,
+        app=app,
+        default_limits=["200 per day", "50 per hour", "10 per minute"],
+        storage_uri=redis_url
+    )
+except ImportError:
+    # Fall back to in-memory rate limiting
+    limiter = Limiter(
+        key_func=get_remote_address,
+        app=app,
+        default_limits=["200 per day", "50 per hour", "10 per minute"]
+    )
+
+# File and Upload Configuration
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "outputs"
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff', 'webp'}
@@ -53,476 +93,256 @@ def check_imagemagick():
         logger.error(f"Error checking ImageMagick: {e}")
         return False, None
 
-# --- HTML Content (All in one place) ---
-HTML_CONTENT = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ImageMagick Web Tool</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
-        .container { background: white; padding: 30px; border-radius: 15px; max-width: 900px; margin: auto; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); position: relative; }
-        .header { text-align: center; margin-bottom: 30px; }
-        .header h1 { color: #333; margin-bottom: 10px; font-size: 2.5em; font-weight: 300; }
-        .header p { color: #666; font-size: 1.1em; }
-        .upload-section { background: #f8f9fa; border-radius: 10px; padding: 20px; margin-bottom: 25px; border: 2px dashed #dee2e6; text-align: center; transition: all 0.3s ease; }
-        .upload-section:hover { border-color: #007bff; background: #f0f7ff; }
-        .file-input-wrapper { position: relative; display: inline-block; }
-        .file-input { opacity: 0; position: absolute; z-index: -1; }
-        .file-input-button { display: inline-block; padding: 12px 24px; background: #007bff; color: white; border-radius: 25px; cursor: pointer; transition: all 0.3s ease; font-weight: 500; }
-        .file-input-button:hover { background: #0056b3; transform: translateY(-2px); }
-        .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px; }
-        .control-group { background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #007bff; }
-        .control-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
-        .control-group select, .control-group input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; transition: border-color 0.3s ease; }
-        .control-group select:focus, .control-group input:focus { outline: none; border-color: #007bff; box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1); }
-        .advanced-options { background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 10px; padding: 20px; margin-bottom: 25px; }
-        .advanced-options h3 { color: #856404; margin-bottom: 15px; display: flex; align-items: center; cursor: pointer; }
-        .advanced-options-content { display: none; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px; }
-        .advanced-options.expanded .advanced-options-content { display: grid; }
-        .toggle-icon { margin-left: 10px; transition: transform 0.3s ease; }
-        .advanced-options.expanded .toggle-icon { transform: rotate(90deg); }
-        .button-group { text-align: center; margin-bottom: 30px; }
-        .btn { padding: 12px 30px; margin: 5px; border: none; border-radius: 25px; font-size: 16px; font-weight: 500; cursor: pointer; transition: all 0.3s ease; text-transform: uppercase; letter-spacing: 1px; }
-        .btn-primary { background: linear-gradient(45deg, #007bff, #0056b3); color: white; }
-        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0, 123, 255, 0.4); }
-        .btn-secondary { background: #6c757d; color: white; }
-        .btn-secondary:hover { background: #545b62; transform: translateY(-2px); }
-        .results-section { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        .image-container { text-align: center; background: #f8f9fa; border-radius: 10px; padding: 20px; min-height: 200px; }
-        .image-container h3 { color: #333; margin-bottom: 15px; font-size: 1.2em; }
-        .image-container img { max-width: 100%; max-height: 300px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); transition: transform 0.3s ease; }
-        .image-container img:hover { transform: scale(1.05); }
-        .status-message { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; padding: 12px; border-radius: 6px; margin-bottom: 20px; display: none; }
-        .error-message { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 12px; border-radius: 6px; margin-bottom: 20px; display: none; }
-        .loading { text-align: center; padding: 20px; }
-        .spinner { display: inline-block; width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #007bff; border-radius: 50%; animation: spin 1s linear infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .health-status { position: absolute; top: 20px; right: 20px; padding: 8px 15px; border-radius: 20px; font-size: 12px; font-weight: 600; }
-        .health-status.healthy { background: #d4edda; color: #155724; }
-        .health-status.unhealthy { background: #f8d7da; color: #721c24; }
-        .health-status.warning { background: #fff3cd; color: #856404; }
-        .install-instructions { background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 10px; padding: 20px; margin-bottom: 25px; display: none; }
-        .install-instructions h3 { color: #1565c0; margin-bottom: 15px; }
-        .install-instructions ol { margin-left: 20px; }
-        .install-instructions li { margin-bottom: 10px; color: #333; }
-        .install-instructions code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
-        @media (max-width: 768px) { .controls-grid, .results-section { grid-template-columns: 1fr; } .container { padding: 20px; margin: 10px; } .header h1 { font-size: 2em; } }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="health-status" id="healthStatus">Checking...</div>
-        <div class="header">
-            <h1>🎨 Image Processor</h1>
-            <p>Transform your images with powerful ImageMagick processing</p>
-        </div>
-        <div class="status-message" id="statusMessage"></div>
-        <div class="error-message" id="errorMessage"></div>
+# --- Security Helper Functions ---
+def require_api_key(f):
+    """Decorator to require API key authentication"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Check for API key in headers
+        api_key = request.headers.get('X-API-Key') or request.headers.get('Authorization')
         
-        <div class="install-instructions" id="installInstructions">
-            <h3>📋 ImageMagick Installation Required</h3>
-            <p>To use this image processor, you need to install ImageMagick first:</p>
-            <ol>
-                <li>Download ImageMagick from <a href="https://imagemagick.org/script/download.php#windows" target="_blank">https://imagemagick.org/script/download.php#windows</a></li>
-                <li>Choose the Windows binary release (e.g., ImageMagick-7.1.1-Q16-HDRI-x64-dll.exe)</li>
-                <li>Run the installer with administrator privileges</li>
-                <li>Make sure to check "Install development headers and libraries for C and C++" during installation</li>
-                <li>Restart your command prompt/PowerShell</li>
-                <li>Refresh this page to check if ImageMagick is detected</li>
-            </ol>
-            <p><strong>Alternative:</strong> If you have Chocolatey installed, run: <code>choco install imagemagick</code> (as administrator)</p>
-        </div>
+        # Check for API key in query parameters (less secure, but useful for some integrations)
+        if not api_key:
+            api_key = request.args.get('api_key')
         
-        <div class="upload-section">
-            <div class="file-input-wrapper">
-                <input type="file" id="imageInput" class="file-input" accept="image/*" />
-                <label for="imageInput" class="file-input-button">
-                    📁 Choose Image File
-                </label>
-            </div>
-            <p style="margin-top: 10px; color: #666;">Supported formats: PNG, JPG, JPEG, GIF, BMP, TIFF, WebP (Max: 16MB)</p>
-        </div>
-        <div class="controls-grid">
-            <div class="control-group">
-                <label for="action">🔧 Processing Action:</label>
-                <select id="action" onchange="toggleAdvancedOptions()">
-                    <option value="resize">Resize Image</option>
-                    <option value="grayscale">Convert to Grayscale</option>
-                    <option value="rotate">Rotate Image</option>
-                    <option value="text" selected>Add Text Overlay</option>
-                    <option value="blur">Apply Blur Effect</option>
-                    <option value="sharpen">Sharpen Image</option>
-                    <option value="sepia">Sepia Tone</option>
-                    <option value="negative">Negative Effect</option>
-                    <option value="flip">Flip Vertically</option>
-                    <option value="flop">Flip Horizontally</option>
-                </select>
-            </div>
-            <div class="control-group" id="textGroup" style="display: block;">
-                <label for="textInput">✏️ Text to Add:</label>
-                <input type="text" id="textInput" placeholder="Enter your text here..." />
-            </div>
-        </div>
-        <div class="advanced-options" id="advancedOptions">
-            <h3 onclick="toggleAdvanced()">
-                ⚙️ Advanced Options 
-                <span class="toggle-icon">▶</span>
-            </h3>
-            <div class="advanced-options-content">
-                <div class="control-group">
-                    <label for="resizePercentage">Resize %:</label>
-                    <input type="number" id="resizePercentage" value="50" min="1" max="200" />
-                </div>
-                <div class="control-group">
-                    <label for="rotationAngle">Rotation Angle:</label>
-                    <input type="number" id="rotationAngle" value="90" min="-360" max="360" />
-                </div>
-                <div class="control-group">
-                    <label for="textSize">Text Size:</label>
-                    <input type="number" id="textSize" value="120" min="8" max="200" />
-                </div>
-                <div class="control-group">
-                    <label for="textColor">Text Color:</label>
-                    <select id="textColor">
-                        <option value="white">White</option>
-                        <option value="black" selected>Black</option>
-                        <option value="red">Red</option>
-                        <option value="blue">Blue</option>
-                        <option value="green">Green</option>
-                        <option value="yellow">Yellow</option>
-                    </select>
-                </div>
-                <div class="control-group">
-                    <label for="textFont">Font Family:</label>
-                    <select id="textFont">
-                        <option value="Arial" selected>Arial</option>
-                        <option value="Times-New-Roman">Times New Roman</option>
-                        <option value="Helvetica">Helvetica</option>
-                        <option value="Georgia">Georgia</option>
-                        <option value="Verdana">Verdana</option>
-                        <option value="Courier-New">Courier New</option>
-                        <option value="Comic-Sans-MS">Comic Sans MS</option>
-                        <option value="Impact">Impact</option>
-                        <option value="Trebuchet-MS">Trebuchet MS</option>
-                        <option value="Palatino">Palatino</option>
-                    </select>
-                </div>
-                <div class="control-group">
-                    <label for="textPosition">Text Position:</label>
-                    <select id="textPosition">
-                        <option value="South">Bottom</option>
-                        <option value="North">Top</option>
-                        <option value="Center" selected>Center</option>
-                        <option value="West">Center Left</option>
-                        <option value="East">Center Right</option>
-                        <option value="SouthEast">Bottom Right</option>
-                        <option value="SouthWest">Bottom Left</option>
-                        <option value="NorthEast">Top Right</option>
-                        <option value="NorthWest">Top Left</option>
-                    </select>
-                </div>
-                <div class="control-group">
-                    <label for="blurRadius">Blur Radius:</label>
-                    <input type="text" id="blurRadius" value="0x1" placeholder="e.g., 0x1, 2x2" />
-                </div>
-            </div>
-        </div>
-        <div class="button-group">
-            <button class="btn btn-primary" onclick="processImage()" id="processBtn">
-                🚀 Process Image
-            </button>
-            <button class="btn btn-secondary" onclick="resetAll()">
-                🔄 Reset All
-            </button>
-        </div>
-        <div id="loadingIndicator" class="loading" style="display: none;">
-            <div class="spinner"></div>
-            <p>Processing your image...</p>
-        </div>
-        <div class="results-section">
-            <div class="image-container">
-                <h3>📷 Original Image</h3>
-                <img id="originalImage" src="" alt="Original Image" style="display: none;" />
-                <p id="originalPlaceholder" style="color: #999; margin-top: 50px;">Upload an image to get started</p>
-            </div>
-            <div class="image-container">
-                <h3>✨ Processed Image</h3>
-                <img id="outputImage" src="" alt="Processed Image" style="display: none;" />
-                <p id="processedPlaceholder" style="color: #999; margin-top: 50px;">Processed image will appear here</p>
-            </div>
-        </div>
-    </div>
-    <script>
-        const BACKEND_URL = window.location.protocol + '//' + window.location.host;
+        # Remove 'Bearer ' prefix if present
+        if api_key and api_key.startswith('Bearer '):
+            api_key = api_key[7:]
+        
+        if not api_key or api_key != API_KEY:
+            logger.warning(f"Unauthorized access attempt from {get_remote_address()}")
+            return jsonify({
+                'error': 'Unauthorized',
+                'message': 'Valid API key required',
+                'code': 'INVALID_API_KEY'
+            }), 401
+        
+        return f(*args, **kwargs)
+    return decorated_function
 
-        document.addEventListener('DOMContentLoaded', function() {
-            checkHealth();
-            setupEventListeners();
-        });
+def validate_input(required_fields=None, optional_fields=None):
+    """Decorator to validate input data"""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if required_fields:
+                for field in required_fields:
+                    if field not in request.form and field not in request.files:
+                        return jsonify({
+                            'error': 'Bad Request',
+                            'message': f'Required field missing: {field}',
+                            'code': 'MISSING_FIELD'
+                        }), 400
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
 
-        function setupEventListeners() {
-            document.getElementById('imageInput').addEventListener('change', function(e) {
-                if (e.target.files.length > 0) {
-                    displayOriginalImage(e.target.files[0]);
-                }
-            });
-        }
+def sanitize_filename(filename):
+    """Sanitize filename for security"""
+    if not filename:
+        return None
+    
+    # Use werkzeug's secure_filename and add additional checks
+    filename = secure_filename(filename)
+    
+    # Remove any remaining dangerous characters
+    dangerous_chars = ['..', '/', '\\', ':', '*', '?', '"', '<', '>', '|']
+    for char in dangerous_chars:
+        filename = filename.replace(char, '_')
+    
+    return filename
 
-        function checkHealth() {
-            fetch(`${BACKEND_URL}/health`)
-                .then(response => response.json())
-                .then(data => {
-                    const healthStatus = document.getElementById('healthStatus');
-                    const installInstructions = document.getElementById('installInstructions');
-                    const processBtn = document.getElementById('processBtn');
-                    
-                    if (data.status === 'healthy' && data.imagemagick_installed) {
-                        healthStatus.textContent = '✅ Ready';
-                        healthStatus.className = 'health-status healthy';
-                        installInstructions.style.display = 'none';
-                        processBtn.disabled = false;
-                    } else if (data.status === 'healthy' && !data.imagemagick_installed) {
-                        healthStatus.textContent = '⚠️ ImageMagick Missing';
-                        healthStatus.className = 'health-status warning';
-                        installInstructions.style.display = 'block';
-                        processBtn.disabled = true;
-                        showError('ImageMagick is not installed. Please see installation instructions above.');
-                    } else {
-                        healthStatus.textContent = '❌ Backend Issues';
-                        healthStatus.className = 'health-status unhealthy';
-                        installInstructions.style.display = 'none';
-                        processBtn.disabled = true;
-                        showError('Backend server is not running.');
-                    }
-                })
-                .catch(error => {
-                    const healthStatus = document.getElementById('healthStatus');
-                    const processBtn = document.getElementById('processBtn');
-                    healthStatus.textContent = '🔌 Disconnected';
-                    healthStatus.className = 'health-status unhealthy';
-                    processBtn.disabled = true;
-                    showError('Cannot connect to backend. Please start the Flask server.');
-                });
-        }
+def generate_jwt_token(payload, expires_in_hours=24):
+    """Generate JWT token for session management"""
+    payload['exp'] = datetime.utcnow() + timedelta(hours=expires_in_hours)
+    payload['iat'] = datetime.utcnow()
+    return jwt.encode(payload, JWT_SECRET, algorithm='HS256')
 
-        function displayOriginalImage(file) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const originalImage = document.getElementById('originalImage');
-                const originalPlaceholder = document.getElementById('originalPlaceholder');
-                originalImage.src = e.target.result;
-                originalImage.style.display = 'block';
-                originalPlaceholder.style.display = 'none';
-            };
-            reader.readAsDataURL(file);
-        }
-
-        function toggleAdvancedOptions() {
-            const action = document.getElementById('action').value;
-            const textGroup = document.getElementById('textGroup');
-            if (action === 'text') {
-                textGroup.style.display = 'block';
-            } else {
-                textGroup.style.display = 'none';
-            }
-        }
-
-        function toggleAdvanced() {
-            const advancedOptions = document.getElementById('advancedOptions');
-            advancedOptions.classList.toggle('expanded');
-        }
-
-        function showStatus(message) {
-            const statusEl = document.getElementById('statusMessage');
-            const errorEl = document.getElementById('errorMessage');
-            errorEl.style.display = 'none';
-            statusEl.textContent = message;
-            statusEl.style.display = 'block';
-            setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
-        }
-
-        function showError(message) {
-            const statusEl = document.getElementById('statusMessage');
-            const errorEl = document.getElementById('errorMessage');
-            statusEl.style.display = 'none';
-            errorEl.textContent = message;
-            errorEl.style.display = 'block';
-        }
-
-        function hideMessages() {
-            document.getElementById('statusMessage').style.display = 'none';
-            document.getElementById('errorMessage').style.display = 'none';
-        }
-
-        function processImage() {
-            const fileInput = document.getElementById('imageInput');
-            const action = document.getElementById('action').value;
-            const text = document.getElementById('textInput').value;
-            if (!fileInput.files.length) {
-                showError('Please upload an image first.');
-                return;
-            }
-            if (action === 'text' && !text.trim()) {
-                showError('Please enter text to add to the image.');
-                return;
-            }
-            document.getElementById('loadingIndicator').style.display = 'block';
-            hideMessages();
-            const formData = new FormData();
-            formData.append('image', fileInput.files[0]);
-            formData.append('action', action);
-            formData.append('text', text);
-            formData.append('resize_percentage', document.getElementById('resizePercentage').value);
-            formData.append('rotation_angle', document.getElementById('rotationAngle').value);
-            formData.append('text_size', document.getElementById('textSize').value);
-            formData.append('text_color', document.getElementById('textColor').value);
-            formData.append('text_font', document.getElementById('textFont').value);
-            formData.append('text_position', document.getElementById('textPosition').value);
-            formData.append('blur_radius', document.getElementById('blurRadius').value);
-
-            fetch(`${BACKEND_URL}/process`, {
-                method: 'POST',
-                body: formData,
-            })
-            .then(response => {
-                if (!response.ok) {
-                    return response.json().then(err => Promise.reject(err));
-                }
-                return response.blob();
-            })
-            .then(blob => {
-                const url = URL.createObjectURL(blob);
-                const outputImage = document.getElementById('outputImage');
-                const processedPlaceholder = document.getElementById('processedPlaceholder');
-                outputImage.src = url;
-                outputImage.style.display = 'block';
-                processedPlaceholder.style.display = 'none';
-                showStatus('✅ Image processed successfully!');
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                showError(error.error || 'Failed to process image. Please try again.');
-            })
-            .finally(() => {
-                document.getElementById('loadingIndicator').style.display = 'none';
-            });
-        }
-
-        function resetAll() {
-            document.getElementById('imageInput').value = '';
-            document.getElementById('action').selectedIndex = 3; // Add Text Overlay option
-            document.getElementById('textInput').value = '';
-            document.getElementById('resizePercentage').value = '50';
-            document.getElementById('rotationAngle').value = '90';
-            document.getElementById('textSize').value = '120';
-            document.getElementById('textColor').selectedIndex = 1; // Black option
-            document.getElementById('textFont').selectedIndex = 0; // Arial option
-            document.getElementById('textPosition').selectedIndex = 2; // Center option
-            document.getElementById('blurRadius').value = '0x1';
-            document.getElementById('originalImage').style.display = 'none';
-            document.getElementById('outputImage').style.display = 'none';
-            document.getElementById('originalPlaceholder').style.display = 'block';
-            document.getElementById('processedPlaceholder').style.display = 'block';
-            document.getElementById('textGroup').style.display = 'block'; // Show text group for default action
-            hideMessages();
-            showStatus('🔄 All settings reset');
-        }
-
-        toggleAdvancedOptions();
-    </script>
-</body>
-</html>
-"""
+def verify_jwt_token(token):
+    """Verify JWT token"""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
 
 # --- Flask Routes ---
 @app.route('/')
 def index():
-    """Serve the HTML frontend directly from the Python file."""
-    return HTML_CONTENT
+    """Serve the HTML frontend from templates."""
+    return render_template('index.html', api_key=API_KEY)
 
-@app.route('/health', methods=['GET'])
+@app.route('/api/health', methods=['GET'])
+@limiter.limit("30 per minute")
 def health_check():
-    """Health check endpoint."""
+    """Health check endpoint - no authentication required"""
     imagemagick_installed, magick_cmd = check_imagemagick()
     return jsonify({
         'status': 'healthy',
+        'service': 'imagemagick-api',
+        'version': '1.0.0',
         'imagemagick_installed': imagemagick_installed,
         'magick_command': magick_cmd,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'rate_limits': {
+            'per_day': 200,
+            'per_hour': 50,
+            'per_minute': 10
+        }
     })
 
-@app.route('/process', methods=['POST'])
-def process_image():
-    """Process uploaded image with selected action."""
+@app.route('/api/auth/token', methods=['POST'])
+@limiter.limit("5 per minute")
+def generate_token():
+    """Generate JWT token for session-based authentication (optional)"""
+    try:
+        data = request.get_json()
+        
+        # For demo purposes, we'll use a simple username/password
+        # In production, integrate with your actual auth system
+        username = data.get('username')
+        password = data.get('password')
+        
+        # Simple check - replace with your actual authentication logic
+        if username == 'admin' and password == os.getenv('ADMIN_PASSWORD', 'admin123'):
+            token = generate_jwt_token({'username': username, 'role': 'admin'})
+            return jsonify({
+                'success': True,
+                'token': token,
+                'expires_in': 24 * 3600  # 24 hours in seconds
+            })
+        else:
+            return jsonify({
+                'error': 'Invalid credentials',
+                'code': 'INVALID_CREDENTIALS'
+            }), 401
+            
+    except Exception as e:
+        logger.error(f"Token generation error: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'code': 'SERVER_ERROR'
+        }), 500
+
+@app.route('/api/process', methods=['POST'])
+@limiter.limit("20 per minute")
+@require_api_key
+@validate_input(required_fields=['image', 'action'])
+def process_image_api():
+    """Secure API endpoint for image processing - designed for n8n integration"""
+    start_time = time.time()
+    input_path = None
+    output_path = None
+    
     try:
         # Check if ImageMagick is installed
         imagemagick_installed, magick_cmd = check_imagemagick()
         if not imagemagick_installed:
-            return jsonify({'error': 'ImageMagick is not installed or not in PATH. Please install ImageMagick first.'}), 500
+            return jsonify({
+                'error': 'Service unavailable',
+                'message': 'ImageMagick is not installed or not in PATH',
+                'code': 'IMAGEMAGICK_NOT_FOUND'
+            }), 503
 
         # Validate file upload
         if 'image' not in request.files:
-            return jsonify({'error': 'No image file uploaded'}), 400
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'No image file uploaded',
+                'code': 'NO_FILE'
+            }), 400
 
         file = request.files['image']
         if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'No file selected',
+                'code': 'EMPTY_FILENAME'
+            }), 400
 
-        if not allowed_file(file.filename):
-            return jsonify({'error': f'File type not allowed. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
+        # Sanitize filename
+        safe_filename = sanitize_filename(file.filename)
+        if not safe_filename or not allowed_file(safe_filename):
+            return jsonify({
+                'error': 'Bad request',
+                'message': f'File type not allowed. Supported: {", ".join(ALLOWED_EXTENSIONS)}',
+                'code': 'INVALID_FILE_TYPE'
+            }), 400
 
-        # Get parameters
-        action = request.form.get('action', '').lower()
-        text = request.form.get('text', '')
+        # Get and validate action
+        action = request.form.get('action', '').lower().strip()
+        valid_actions = ['resize', 'grayscale', 'rotate', 'text', 'blur', 'sharpen', 
+                        'sepia', 'negative', 'flip', 'flop']
         
-        # Get custom parameters
-        resize_percentage = request.form.get('resize_percentage', '50')
-        rotation_angle = request.form.get('rotation_angle', '90')
-        text_size = request.form.get('text_size', '120')
-        text_color = request.form.get('text_color', 'black')
-        text_font = request.form.get('text_font', 'Arial')
-        text_position = request.form.get('text_position', 'Center')
-        blur_radius = request.form.get('blur_radius', '0x1')
+        if action not in valid_actions:
+            return jsonify({
+                'error': 'Bad request',
+                'message': f'Invalid action. Valid actions: {", ".join(valid_actions)}',
+                'code': 'INVALID_ACTION'
+            }), 400
 
-        # Generate unique filename for temporary storage
+        # Get and validate parameters with defaults and ranges
+        try:
+            params = {
+                'text': request.form.get('text', '').strip(),
+                'resize_percentage': max(1, min(500, int(request.form.get('resize_percentage', '50')))),
+                'rotation_angle': max(-360, min(360, int(request.form.get('rotation_angle', '90')))),
+                'text_size': max(8, min(500, int(request.form.get('text_size', '120')))),
+                'text_color': request.form.get('text_color', 'black').strip(),
+                'text_font': request.form.get('text_font', 'Arial').strip(),
+                'text_position': request.form.get('text_position', 'Center').strip(),
+                'blur_radius': request.form.get('blur_radius', '0x1').strip()
+            }
+        except ValueError as e:
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'Invalid parameter value',
+                'code': 'INVALID_PARAMETER'
+            }), 400
+
+        # Validate text for text action
+        if action == 'text' and not params['text']:
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'Text parameter is required for text action',
+                'code': 'MISSING_TEXT'
+            }), 400
+
+        # Generate unique filenames
         unique_id = str(uuid.uuid4())
-        original_ext = file.filename.rsplit('.', 1)[1].lower()
-        input_filename = f"{unique_id}.{original_ext}"
+        original_ext = safe_filename.rsplit('.', 1)[1].lower()
+        input_filename = f"{unique_id}_input.{original_ext}"
         input_path = os.path.join(UPLOAD_FOLDER, input_filename)
         
-        # Output filename will have the same extension
-        output_filename = f"output_{unique_id}.{original_ext}"
+        output_filename = f"{unique_id}_output.{original_ext}"
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
 
         # Save uploaded file
         file.save(input_path)
-        logger.info(f"File saved: {input_path}")
+        logger.info(f"File saved: {input_path} for action: {action}")
 
-        # Build ImageMagick command based on action
+        # Build ImageMagick command
         cmd = [magick_cmd, input_path]
         
+        # Add action-specific parameters
         if action == "resize":
-            cmd.extend(["-resize", f"{resize_percentage}%"])
+            cmd.extend(["-resize", f"{params['resize_percentage']}%"])
         elif action == "grayscale":
             cmd.extend(["-colorspace", "Gray"])
         elif action == "rotate":
-            cmd.extend(["-rotate", rotation_angle])
+            cmd.extend(["-rotate", str(params['rotation_angle'])])
         elif action == "text":
-            if not text:
-                return jsonify({'error': 'Text parameter is required for text action'}), 400
             cmd.extend([
-                "-gravity", text_position,
-                "-font", text_font,
-                "-pointsize", text_size,
-                "-fill", text_color,
-                "-annotate", "+0+10", text
+                "-gravity", params['text_position'],
+                "-font", params['text_font'],
+                "-pointsize", str(params['text_size']),
+                "-fill", params['text_color'],
+                "-annotate", "+0+10", params['text']
             ])
         elif action == "blur":
-            cmd.extend(["-blur", blur_radius])
+            cmd.extend(["-blur", params['blur_radius']])
         elif action == "sharpen":
             cmd.extend(["-sharpen", "0x1"])
         elif action == "sepia":
@@ -533,52 +353,247 @@ def process_image():
             cmd.extend(["-flip"])
         elif action == "flop":
             cmd.extend(["-flop"])
-        else:
-            return jsonify({'error': f'Invalid action: {action}'}), 400
 
         cmd.append(output_path)
 
-        # Execute ImageMagick command
-        logger.info(f"Executing command: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
+        # Execute ImageMagick command with timeout
+        logger.info(f"Executing: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
         
         if result.returncode != 0:
             logger.error(f"ImageMagick error: {result.stderr}")
-            return jsonify({'error': f'ImageMagick processing failed: {result.stderr}'}), 500
+            return jsonify({
+                'error': 'Processing failed',
+                'message': 'Image processing failed',
+                'code': 'PROCESSING_ERROR'
+            }), 500
 
-        # Return processed image
-        return send_file(output_path, mimetype=f'image/{original_ext}', as_attachment=False)
+        # Check if output file was created and get file info
+        if not os.path.exists(output_path):
+            return jsonify({
+                'error': 'Processing failed',
+                'message': 'Output file was not created',
+                'code': 'NO_OUTPUT'
+            }), 500
+
+        # Get file size and processing time
+        output_size = os.path.getsize(output_path)
+        processing_time = round(time.time() - start_time, 3)
+
+        # Read and encode the image as base64 for API response
+        with open(output_path, 'rb') as img_file:
+            img_data = img_file.read()
+            img_base64 = base64.b64encode(img_data).decode('utf-8')
+
+        # Return successful response with metadata
+        response_data = {
+            'success': True,
+            'message': 'Image processed successfully',
+            'data': {
+                'image': img_base64,
+                'format': original_ext,
+                'size_bytes': output_size,
+                'processing_time_seconds': processing_time,
+                'action': action,
+                'parameters': params,
+                'timestamp': datetime.now().isoformat()
+            },
+            'metadata': {
+                'request_id': unique_id,
+                'content_type': f'image/{original_ext}',
+                'filename': f"processed_{unique_id}.{original_ext}"
+            }
+        }
+
+        logger.info(f"Image processed successfully: {unique_id}, action: {action}, time: {processing_time}s")
+        return jsonify(response_data)
 
     except subprocess.CalledProcessError as e:
         logger.error(f"ImageMagick command failed: {e.stderr}")
-        return jsonify({'error': f'Image processing failed: {e.stderr}'}), 500
+        return jsonify({
+            'error': 'Processing failed',
+            'message': 'ImageMagick command execution failed',
+            'code': 'COMMAND_FAILED'
+        }), 500
+        
     except subprocess.TimeoutExpired:
         logger.error("ImageMagick command timed out")
-        return jsonify({'error': 'Image processing timed out. Please try with a smaller image.'}), 500
+        return jsonify({
+            'error': 'Processing timeout',
+            'message': 'Image processing timed out. Try with a smaller image.',
+            'code': 'TIMEOUT'
+        }), 408
+        
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
+        logger.error(f"Unexpected error in process_image_api: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'code': 'SERVER_ERROR'
+        }), 500
+        
     finally:
-        # Clean up files, but check if they exist first
-        if 'input_path' in locals() and os.path.exists(input_path):
-            try:
-                os.remove(input_path)
-                logger.info(f"Cleaned up input file: {input_path}")
-            except Exception as e:
-                logger.warning(f"Could not remove input file {input_path}: {e}")
+        # Clean up files
+        for file_path in [input_path, output_path]:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    logger.debug(f"Cleaned up: {file_path}")
+                except Exception as e:
+                    logger.warning(f"Could not remove {file_path}: {e}")
 
+# Legacy endpoint for backward compatibility
+@app.route('/process', methods=['POST'])
+@limiter.limit("10 per minute")
+def process_image():
+    """Legacy process endpoint (less secure, for backward compatibility)"""
+    return process_image_api()
+
+@app.route('/api/status', methods=['GET'])
+@require_api_key
+def api_status():
+    """Get API status and usage information"""
+    imagemagick_installed, magick_cmd = check_imagemagick()
+    
+    return jsonify({
+        'service': 'ImageMagick API',
+        'version': '1.0.0',
+        'status': 'operational' if imagemagick_installed else 'degraded',
+        'imagemagick': {
+            'installed': imagemagick_installed,
+            'command': magick_cmd
+        },
+        'supported_actions': ['resize', 'grayscale', 'rotate', 'text', 'blur', 'sharpen', 'sepia', 'negative', 'flip', 'flop'],
+        'supported_formats': list(ALLOWED_EXTENSIONS),
+        'limits': {
+            'max_file_size_mb': MAX_CONTENT_LENGTH // (1024 * 1024),
+            'rate_limit_per_minute': 20,
+            'processing_timeout_seconds': 60
+        },
+        'timestamp': datetime.now().isoformat()
+    })
+
+# --- Error Handlers ---
 @app.errorhandler(413)
-def too_large(e):
-    return jsonify({'error': 'File too large. Maximum size is 16MB.'}), 413
+def file_too_large(e):
+    return jsonify({
+        'error': 'File too large',
+        'message': f'Maximum file size is {MAX_CONTENT_LENGTH // (1024 * 1024)}MB',
+        'code': 'FILE_TOO_LARGE'
+    }), 413
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({
+        'error': 'Not found',
+        'message': 'The requested endpoint does not exist',
+        'code': 'NOT_FOUND'
+    }), 404
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    return jsonify({
+        'error': 'Method not allowed',
+        'message': 'The requested method is not allowed for this endpoint',
+        'code': 'METHOD_NOT_ALLOWED'
+    }), 405
+
+@app.errorhandler(429)
+def rate_limit_exceeded(e):
+    return jsonify({
+        'error': 'Rate limit exceeded',
+        'message': 'Too many requests. Please try again later.',
+        'code': 'RATE_LIMIT_EXCEEDED'
+    }), 429
+
+@app.errorhandler(500)
+def internal_error(e):
+    logger.error(f"Internal server error: {str(e)}")
+    return jsonify({
+        'error': 'Internal server error',
+        'message': 'An unexpected error occurred',
+        'code': 'INTERNAL_ERROR'
+    }), 500
+
+# --- Documentation Endpoint ---
+@app.route('/api/docs', methods=['GET'])
+def api_documentation():
+    """API documentation endpoint"""
+    docs = {
+        'title': 'ImageMagick Processing API',
+        'version': '1.0.0',
+        'description': 'Secure API for image processing using ImageMagick, designed for n8n integration',
+        'base_url': request.url_root + 'api/',
+        'authentication': {
+            'type': 'API Key',
+            'header': 'X-API-Key',
+            'description': 'Include your API key in the X-API-Key header'
+        },
+        'endpoints': {
+            'POST /api/process': {
+                'description': 'Process an image with specified action',
+                'authentication': 'required',
+                'rate_limit': '20 per minute',
+                'parameters': {
+                    'image': {'type': 'file', 'required': True, 'description': 'Image file to process'},
+                    'action': {'type': 'string', 'required': True, 'options': ['resize', 'grayscale', 'rotate', 'text', 'blur', 'sharpen', 'sepia', 'negative', 'flip', 'flop']},
+                    'text': {'type': 'string', 'required': False, 'description': 'Text to add (required for text action)'},
+                    'resize_percentage': {'type': 'integer', 'default': 50, 'range': '1-500'},
+                    'rotation_angle': {'type': 'integer', 'default': 90, 'range': '-360 to 360'},
+                    'text_size': {'type': 'integer', 'default': 120, 'range': '8-500'},
+                    'text_color': {'type': 'string', 'default': 'black'},
+                    'text_font': {'type': 'string', 'default': 'Arial'},
+                    'text_position': {'type': 'string', 'default': 'Center'},
+                    'blur_radius': {'type': 'string', 'default': '0x1'}
+                },
+                'response': {
+                    'success': 'Returns base64 encoded processed image with metadata',
+                    'error': 'Returns error object with code and message'
+                }
+            },
+            'GET /api/health': {
+                'description': 'Health check endpoint',
+                'authentication': 'not required',
+                'rate_limit': '30 per minute'
+            },
+            'GET /api/status': {
+                'description': 'Get API status and configuration',
+                'authentication': 'required',
+                'rate_limit': 'default'
+            }
+        },
+        'error_codes': {
+            'INVALID_API_KEY': 'API key is missing or invalid',
+            'MISSING_FIELD': 'Required field is missing',
+            'INVALID_FILE_TYPE': 'File type not supported',
+            'INVALID_ACTION': 'Action not supported',
+            'PROCESSING_ERROR': 'Image processing failed',
+            'TIMEOUT': 'Processing timed out',
+            'FILE_TOO_LARGE': 'File exceeds size limit',
+            'RATE_LIMIT_EXCEEDED': 'Too many requests'
+        }
+    }
+    return jsonify(docs)
 
 if __name__ == "__main__":
     is_production = os.getenv('FLASK_ENV') == 'production'
     port = int(os.getenv('PORT', 5000))
     
     # Print startup information
-    print("=" * 60)
-    print("🎨 ImageMagick Web Image Processor")
-    print("=" * 60)
+    print("=" * 80)
+    print("🎨 Secure ImageMagick Processing API")
+    print("=" * 80)
+    
+    # Security warnings
+    if API_KEY == 'ZWIHZc5e-SWR-XdIPykAZ3K6PncdnwBxa9VlZ9yuZ3M':
+        print("✅ Using generated secure API key")
+    else:
+        print("⚠️  Using custom API key")
+    
+    if not is_production:
+        print("🔧 Running in development mode")
+    else:
+        print("🚀 Running in production mode")
     
     imagemagick_installed, magick_cmd = check_imagemagick()
     if imagemagick_installed:
@@ -590,7 +605,26 @@ if __name__ == "__main__":
         print("   2. Or use Chocolatey: choco install imagemagick (as admin)")
         print("   3. Restart your terminal after installation")
     
-    print(f"🚀 Starting server on http://localhost:{port}")
-    print("=" * 60)
+    print(f"\n📡 API Endpoints:")
+    print(f"   Health Check:    http://localhost:{port}/api/health")
+    print(f"   Process Images:  http://localhost:{port}/api/process")
+    print(f"   API Status:      http://localhost:{port}/api/status")
+    print(f"   Documentation:   http://localhost:{port}/api/docs")
+    print(f"   Web Interface:   http://localhost:{port}/")
+    
+    print(f"\n🔐 Security:")
+    print(f"   API Key Header:  X-API-Key")
+    print(f"   API Key Value:   {API_KEY}")
+    print(f"   Rate Limiting:   Enabled")
+    print(f"   Input Validation: Enabled")
+    
+    print(f"\n🔧 n8n Integration:")
+    print(f"   Use HTTP Request node")
+    print(f"   Method: POST")
+    print(f"   URL: http://localhost:{port}/api/process")
+    print(f"   Headers: X-API-Key: {API_KEY}")
+    print(f"   Body: Form Data with 'image' file and 'action' parameter")
+    
+    print("=" * 80)
     
     app.run(host="0.0.0.0", port=port, debug=not is_production)
