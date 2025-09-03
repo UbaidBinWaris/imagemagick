@@ -4,27 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ImageMagick Web Tool</title>
-<<<<<<< HEAD
-    <link rel="stylesheet" href="../static/styles.css">
-=======
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
->>>>>>> d5938e2
 </head>
 <body>
     <div class="container">
         <div class="health-status" id="healthStatus">Checking...</div>
-<<<<<<< HEAD
-=======
         
->>>>>>> d5938e2
         <div class="header">
             <h1>🎨 Image Processor</h1>
             <p>Transform your images with powerful ImageMagick processing</p>
         </div>
-<<<<<<< HEAD
-=======
         
->>>>>>> d5938e2
         <div class="status-message" id="statusMessage"></div>
         <div class="error-message" id="errorMessage"></div>
         
@@ -42,18 +32,6 @@
             <p><strong>Alternative:</strong> If you have Chocolatey installed, run: <code>choco install imagemagick</code> (as administrator)</p>
         </div>
         
-<<<<<<< HEAD
-        <!-- Import/Export Section -->
-        <div class="import-export-section">
-            <div class="section-tabs">
-                <button class="tab-button active" onclick="switchTab('upload')">📁 Upload New</button>
-                <button class="tab-button" onclick="switchTab('import')">📥 Import Existing</button>
-                <button class="tab-button" onclick="switchTab('export')">📤 Export Images</button>
-            </div>
-            
-            <!-- Upload Tab -->
-            <div id="uploadTab" class="tab-content active">
-=======
         <!-- Image Source Selection -->
         <div class="image-source-section">
             <div class="image-source-tabs">
@@ -63,7 +41,6 @@
             
             <!-- Upload Section -->
             <div id="uploadSection" class="upload-section">
->>>>>>> d5938e2
                 <div class="file-input-wrapper">
                     <input type="file" id="imageInput" class="file-input" accept="image/*" />
                     <label for="imageInput" class="file-input-button">
@@ -73,42 +50,6 @@
                 <p style="margin-top: 10px; color: #666;">Supported formats: PNG, JPG, JPEG, GIF, BMP, TIFF, WebP (Max: 16MB)</p>
             </div>
             
-<<<<<<< HEAD
-            <!-- Import Tab -->
-            <div id="importTab" class="tab-content">
-                <div class="import-controls">
-                    <button class="btn btn-secondary" onclick="loadAvailableImages()">
-                        🔄 Refresh Available Images
-                    </button>
-                    <div id="availableImagesContainer" class="available-images">
-                        <p>Click "Refresh Available Images" to load images from server</p>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Export Tab -->
-            <div id="exportTab" class="tab-content">
-                <div class="export-controls">
-                    <div class="control-group">
-                        <label for="exportFormat">Export Format:</label>
-                        <select id="exportFormat">
-                            <option value="png">PNG</option>
-                            <option value="jpg">JPG</option>
-                            <option value="gif">GIF</option>
-                            <option value="bmp">BMP</option>
-                            <option value="tiff">TIFF</option>
-                            <option value="webp">WebP</option>
-                        </select>
-                    </div>
-                    <div class="control-group">
-                        <label for="exportQuality">Quality (1-100):</label>
-                        <input type="number" id="exportQuality" value="90" min="1" max="100" />
-                    </div>
-                    <button class="btn btn-primary" onclick="exportCurrentImage()" id="exportButton" disabled>
-                        💾 Export Current Image
-                    </button>
-                    <p style="margin-top: 10px; color: #666;">Process an image first to enable export</p>
-=======
             <!-- Default Images Section -->
             <div id="defaultSection" class="default-section" style="display: none;">
                 <div class="default-images-grid" id="defaultImagesGrid">
@@ -119,15 +60,11 @@
                         <label for="defaultText">✏️ Text to Add:</label>
                         <input type="text" id="defaultText" placeholder="Enter your text here..." />
                     </div>
->>>>>>> d5938e2
                 </div>
             </div>
         </div>
         
-<<<<<<< HEAD
-=======
         <!-- Processing Controls -->
->>>>>>> d5938e2
         <div class="controls-grid">
             <div class="control-group">
                 <label for="action">🔧 Processing Action:</label>
@@ -150,10 +87,7 @@
             </div>
         </div>
         
-<<<<<<< HEAD
-=======
         <!-- Advanced Options -->
->>>>>>> d5938e2
         <div class="advanced-options" id="advancedOptions">
             <h3 onclick="toggleAdvanced()">
                 ⚙️ Advanced Options 
@@ -189,10 +123,6 @@
                         <option value="Arial" selected>Arial</option>
                         <option value="Times-New-Roman">Times New Roman</option>
                         <option value="Helvetica">Helvetica</option>
-<<<<<<< HEAD
-                        <option value="Courier">Courier</option>
-                        <option value="Georgia">Georgia</option>
-=======
                         <option value="Georgia">Georgia</option>
                         <option value="Verdana">Verdana</option>
                         <option value="Courier-New">Courier New</option>
@@ -200,55 +130,11 @@
                         <option value="Impact">Impact</option>
                         <option value="Trebuchet-MS">Trebuchet MS</option>
                         <option value="Palatino">Palatino</option>
->>>>>>> d5938e2
                     </select>
                 </div>
                 <div class="control-group">
                     <label for="textPosition">Text Position:</label>
                     <select id="textPosition">
-<<<<<<< HEAD
-                        <option value="Center" selected>Center</option>
-                        <option value="North">Top</option>
-                        <option value="South">Bottom</option>
-                        <option value="East">Right</option>
-                        <option value="West">Left</option>
-                        <option value="NorthEast">Top Right</option>
-                        <option value="NorthWest">Top Left</option>
-                        <option value="SouthEast">Bottom Right</option>
-                        <option value="SouthWest">Bottom Left</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-        
-        <div class="button-group">
-            <button class="btn btn-primary" onclick="processImage()">
-                🚀 Process Image
-            </button>
-            <button class="btn btn-secondary" onclick="resetForm()">
-                🔄 Reset
-            </button>
-        </div>
-        
-        <div class="results-section" id="resultsSection" style="display: none;">
-            <div class="image-container">
-                <h3>📤 Original Image</h3>
-                <div id="originalImageContainer"></div>
-            </div>
-            <div class="image-container">
-                <h3>📥 Processed Image</h3>
-                <div id="processedImageContainer"></div>
-                <div id="downloadSection" style="display: none; margin-top: 15px;">
-                    <button class="btn btn-primary" onclick="downloadImage()">
-                        💾 Download Processed Image
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script src="../static/app.js"></script>
-=======
                         <option value="South">Bottom</option>
                         <option value="North">Top</option>
                         <option value="Center" selected>Center</option>
@@ -296,6 +182,5 @@
     </div>
     
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
->>>>>>> d5938e2
 </body>
 </html>
