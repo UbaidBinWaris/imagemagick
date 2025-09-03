@@ -1,0 +1,117 @@
+{
+  "name": "ImageMagick Webhook with Upload Link",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "simple-upload",
+        "options": {
+          "noResponseBody": false
+        }
+      },
+      "id": "webhook-upload",
+      "name": "Image Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "simple-upload-webhook"
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5000/webhook/simple-upload",
+        "sendBody": true,
+        "bodyContentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "image",
+              "value": "",
+              "parameterType": "formBinaryData",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "action",
+              "value": "={{ $('Image Upload Webhook').item.json.body.action || 'resize' }}"
+            },
+            {
+              "name": "resize_percentage",
+              "value": "={{ $('Image Upload Webhook').item.json.body.resize_percentage || '50' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "process-with-upload",
+      "name": "Process & Store Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process the webhook response to extract useful information\nconst response = items[0].json;\n\nif (response.success) {\n  return [\n    {\n      json: {\n        success: true,\n        message: 'Image processed and uploaded successfully',\n        \n        // Original uploaded image information\n        upload_info: {\n          original_filename: response.data.original_filename,\n          upload_timestamp: response.data.upload_timestamp,\n          permanent_filename: response.links.permanent_filename,\n          original_image_url: response.links.original_image_url\n        },\n        \n        // Processing information\n        processing_info: {\n          action_performed: response.data.action_performed,\n          resize_percentage: response.data.resize_percentage,\n          processing_time: response.data.processing_time_seconds\n        },\n        \n        // Access links\n        links: {\n          view_original: response.links.original_image_url,\n          upload_folder_link: `http://localhost:5000${response.links.upload_folder_path}`,\n          list_all_uploads: 'http://localhost:5000/api/uploads'\n        },\n        \n        // Metadata\n        webhook_id: response.metadata.webhook_id,\n        unique_id: response.metadata.unique_id,\n        timestamp: response.metadata.timestamp\n      },\n      \n      // Include the processed image as binary data\n      binary: {\n        processedImage: {\n          data: Buffer.from(response.data.processed_image, 'base64'),\n          mimeType: response.metadata.content_type,\n          fileName: `processed_${response.data.original_filename}`\n        }\n      }\n    }\n  ];\n} else {\n  throw new Error('Image processing failed: ' + (response.error || 'Unknown error'));\n}"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true,\n  \"message\": \"{{ $json.message }}\",\n  \"upload_info\": {{ JSON.stringify($json.upload_info) }},\n  \"processing_info\": {{ JSON.stringify($json.processing_info) }},\n  \"links\": {{ JSON.stringify($json.links) }},\n  \"instructions\": {\n    \"view_original\": \"Click the 'view_original' link to see the uploaded image\",\n    \"access_uploads\": \"Visit the 'list_all_uploads' URL to see all uploaded images\",\n    \"direct_access\": \"The original image is permanently stored and accessible via the provided URL\"\n  }\n}",
+        "options": {}
+      },
+      "id": "respond-to-webhook",
+      "name": "Respond with Links",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Image Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "Process & Store Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process & Store Image": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond with Links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "versionId": "1"
+}

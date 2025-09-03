@@ -449,6 +449,241 @@ def process_image():
     """Legacy process endpoint (less secure, for backward compatibility)"""
     return process_image_api()
 
+@app.route('/webhook/<webhook_id>', methods=['POST'])
+@limiter.limit("30 per minute")
+def webhook_handler(webhook_id):
+    """n8n webhook endpoint for image upload and processing"""
+    start_time = time.time()
+    input_path = None
+    output_path = None
+    
+    try:
+        # Check if ImageMagick is installed
+        imagemagick_installed, magick_cmd = check_imagemagick()
+        if not imagemagick_installed:
+            return jsonify({
+                'error': 'Service unavailable',
+                'message': 'ImageMagick is not installed or not in PATH',
+                'code': 'IMAGEMAGICK_NOT_FOUND'
+            }), 503
+
+        # Handle file upload from webhook
+        if 'image' not in request.files:
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'No image file uploaded',
+                'code': 'NO_FILE'
+            }), 400
+
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({
+                'error': 'Bad request',
+                'message': 'No file selected',
+                'code': 'EMPTY_FILENAME'
+            }), 400
+
+        # Sanitize filename
+        safe_filename = sanitize_filename(file.filename)
+        if not safe_filename or not allowed_file(safe_filename):
+            return jsonify({
+                'error': 'Bad request',
+                'message': f'File type not allowed. Supported: {", ".join(ALLOWED_EXTENSIONS)}',
+                'code': 'INVALID_FILE_TYPE'
+            }), 400
+
+        # Get processing parameters
+        action = request.form.get('action', 'resize').lower().strip()
+        resize_percentage = request.form.get('resize_percentage', '50')
+        
+        # Generate unique filenames
+        unique_id = str(uuid.uuid4())
+        original_ext = safe_filename.rsplit('.', 1)[1].lower()
+        
+        # Save original image with timestamp for permanent access
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        permanent_filename = f"{timestamp}_{unique_id}_{safe_filename}"
+        permanent_path = os.path.join(UPLOAD_FOLDER, permanent_filename)
+        
+        # Save uploaded file permanently
+        file.save(permanent_path)
+        
+        # Create temporary file for processing
+        input_filename = f"{unique_id}_input.{original_ext}"
+        input_path = os.path.join(UPLOAD_FOLDER, input_filename)
+        
+        # Copy to temp file for processing
+        with open(permanent_path, 'rb') as src, open(input_path, 'wb') as dst:
+            dst.write(src.read())
+        
+        output_filename = f"{unique_id}_output.{original_ext}"
+        output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+
+        # Build ImageMagick command for basic resize
+        cmd = [magick_cmd, input_path]
+        
+        if action == "resize":
+            try:
+                percentage = max(1, min(500, int(resize_percentage)))
+                cmd.extend(["-resize", f"{percentage}%"])
+            except ValueError:
+                cmd.extend(["-resize", "50%"])
+        
+        cmd.append(output_path)
+
+        # Execute ImageMagick command
+        logger.info(f"Executing webhook processing: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
+        
+        if result.returncode != 0:
+            logger.error(f"ImageMagick error: {result.stderr}")
+            return jsonify({
+                'error': 'Processing failed',
+                'message': 'Image processing failed',
+                'code': 'PROCESSING_ERROR'
+            }), 500
+
+        # Check if output file was created
+        if not os.path.exists(output_path):
+            return jsonify({
+                'error': 'Processing failed',
+                'message': 'Output file was not created',
+                'code': 'NO_OUTPUT'
+            }), 500
+
+        # Read processed image as base64
+        with open(output_path, 'rb') as img_file:
+            img_data = img_file.read()
+            img_base64 = base64.b64encode(img_data).decode('utf-8')
+
+        # Generate URLs for the uploaded and processed images
+        base_url = request.url_root.rstrip('/')
+        original_image_url = f"{base_url}/uploads/{permanent_filename}"
+        
+        processing_time = round(time.time() - start_time, 3)
+        
+        # Return response with both processed image and upload link
+        response_data = {
+            'success': True,
+            'message': 'Image uploaded and processed successfully',
+            'data': {
+                'processed_image': img_base64,
+                'original_filename': safe_filename,
+                'upload_timestamp': timestamp,
+                'processing_time_seconds': processing_time,
+                'action_performed': action,
+                'resize_percentage': resize_percentage if action == 'resize' else None
+            },
+            'links': {
+                'original_image_url': original_image_url,
+                'permanent_filename': permanent_filename,
+                'upload_folder_path': f"/uploads/{permanent_filename}"
+            },
+            'metadata': {
+                'webhook_id': webhook_id,
+                'unique_id': unique_id,
+                'content_type': f'image/{original_ext}',
+                'timestamp': datetime.now().isoformat()
+            }
+        }
+
+        logger.info(f"Webhook processed successfully: {unique_id}, file saved: {permanent_filename}")
+        return jsonify(response_data)
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"ImageMagick command failed: {e.stderr}")
+        return jsonify({
+            'error': 'Processing failed',
+            'message': 'ImageMagick command execution failed',
+            'code': 'COMMAND_FAILED'
+        }), 500
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in webhook_handler: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'An unexpected error occurred',
+            'code': 'SERVER_ERROR'
+        }), 500
+        
+    finally:
+        # Clean up temporary files only (keep permanent file in uploads)
+        for file_path in [input_path, output_path]:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    logger.debug(f"Cleaned up temporary file: {file_path}")
+                except Exception as e:
+                    logger.warning(f"Could not remove temporary file {file_path}: {e}")
+
+@app.route('/uploads/<filename>')
+def serve_upload(filename):
+    """Serve uploaded images from the uploads folder"""
+    try:
+        safe_filename = sanitize_filename(filename)
+        if not safe_filename:
+            return jsonify({
+                'error': 'Invalid filename',
+                'code': 'INVALID_FILENAME'
+            }), 400
+            
+        file_path = os.path.join(UPLOAD_FOLDER, safe_filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({
+                'error': 'File not found',
+                'code': 'FILE_NOT_FOUND'
+            }), 404
+            
+        return send_file(file_path)
+        
+    except Exception as e:
+        logger.error(f"Error serving upload {filename}: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'code': 'SERVER_ERROR'
+        }), 500
+
+@app.route('/api/uploads', methods=['GET'])
+@limiter.limit("10 per minute")
+def list_uploads():
+    """List all uploaded images with their links"""
+    try:
+        uploads = []
+        base_url = request.url_root.rstrip('/')
+        
+        if os.path.exists(UPLOAD_FOLDER):
+            for filename in os.listdir(UPLOAD_FOLDER):
+                if allowed_file(filename):
+                    file_path = os.path.join(UPLOAD_FOLDER, filename)
+                    file_stats = os.stat(file_path)
+                    
+                    uploads.append({
+                        'filename': filename,
+                        'url': f"{base_url}/uploads/{filename}",
+                        'size_bytes': file_stats.st_size,
+                        'created_at': datetime.fromtimestamp(file_stats.st_ctime).isoformat(),
+                        'modified_at': datetime.fromtimestamp(file_stats.st_mtime).isoformat()
+                    })
+        
+        # Sort by creation time, newest first
+        uploads.sort(key=lambda x: x['created_at'], reverse=True)
+        
+        return jsonify({
+            'success': True,
+            'count': len(uploads),
+            'uploads': uploads,
+            'base_url': base_url,
+            'upload_folder': '/uploads/'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error listing uploads: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'code': 'SERVER_ERROR'
+        }), 500
+
 @app.route('/api/status', methods=['GET'])
 @require_api_key
 def api_status():
@@ -550,6 +785,30 @@ def api_documentation():
                     'success': 'Returns base64 encoded processed image with metadata',
                     'error': 'Returns error object with code and message'
                 }
+            },
+            'POST /webhook/<webhook_id>': {
+                'description': 'n8n webhook endpoint for image upload and processing with permanent storage',
+                'authentication': 'not required',
+                'rate_limit': '30 per minute',
+                'parameters': {
+                    'image': {'type': 'file', 'required': True, 'description': 'Image file to upload and process'},
+                    'action': {'type': 'string', 'default': 'resize', 'description': 'Processing action to perform'},
+                    'resize_percentage': {'type': 'string', 'default': '50', 'description': 'Resize percentage for resize action'}
+                },
+                'response': {
+                    'success': 'Returns processed image data and permanent upload link',
+                    'includes': 'original_image_url for permanent access to uploaded file'
+                }
+            },
+            'GET /uploads/<filename>': {
+                'description': 'Serve uploaded images from uploads folder',
+                'authentication': 'not required',
+                'rate_limit': 'default'
+            },
+            'GET /api/uploads': {
+                'description': 'List all uploaded images with their access links',
+                'authentication': 'not required',
+                'rate_limit': '10 per minute'
             },
             'GET /api/health': {
                 'description': 'Health check endpoint',

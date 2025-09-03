@@ -17,7 +17,7 @@ if __name__ == "__main__":
     
     try:
         app.run(
-            host='127.0.0.1',
+            host='0.0.0.0',  # Allow external connections
             port=5000,
             debug=False,
             use_reloader=False,

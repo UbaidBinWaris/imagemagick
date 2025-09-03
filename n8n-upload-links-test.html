@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>n8n Upload with Links Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input[type="file"], select, input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .upload-links {
+            margin-top: 15px;
+            padding: 15px;
+            background: #e7f3ff;
+            border-radius: 5px;
+        }
+        .link-item {
+            margin: 10px 0;
+        }
+        .link-item a {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .link-item a:hover {
+            text-decoration: underline;
+        }
+        .endpoint-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border-left: 4px solid #007bff;
+        }
+        .code {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 3px;
+            font-family: monospace;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖼️ n8n Image Upload with Permanent Links</h1>
+        
+        <div class="endpoint-info">
+            <h3>New Webhook Endpoint</h3>
+            <div class="code">POST http://localhost:5678/webhook/simple-upload</div>
+            <p><strong>Features:</strong></p>
+            <ul>
+                <li>✅ Uploads image to permanent storage in <code>/uploads</code> folder</li>
+                <li>✅ Processes image (resize, etc.)</li>
+                <li>✅ Returns direct link to uploaded original image</li>
+                <li>✅ Returns processed image as base64</li>
+                <li>✅ No API key required for webhook</li>
+            </ul>
+        </div>
+
+        <form id="uploadForm">
+            <div class="form-group">
+                <label for="imageFile">Select Image:</label>
+                <input type="file" id="imageFile" name="image" accept="image/*" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="action">Processing Action:</label>
+                <select id="action" name="action">
+                    <option value="resize">Resize</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="resize_percentage">Resize Percentage (1-500):</label>
+                <input type="number" id="resize_percentage" name="resize_percentage" min="1" max="500" value="50">
+            </div>
+            
+            <button type="submit">Upload & Process Image</button>
+        </form>
+
+        <div id="result" class="result">
+            <h3>Result:</h3>
+            <div id="resultContent"></div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const resultDiv = document.getElementById('result');
+            const resultContent = document.getElementById('resultContent');
+            
+            // Hide previous results
+            resultDiv.style.display = 'none';
+            
+            try {
+                // Update button to show loading
+                const button = this.querySelector('button');
+                const originalText = button.textContent;
+                button.textContent = 'Processing...';
+                button.disabled = true;
+                
+                // Make request to n8n webhook
+                const response = await fetch('http://localhost:5678/webhook/simple-upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    resultDiv.className = 'result success';
+                    resultContent.innerHTML = `
+                        <p><strong>✅ ${data.message}</strong></p>
+                        
+                        <div class="upload-links">
+                            <h4>📁 Upload Information:</h4>
+                            <div class="link-item">
+                                <strong>Original Filename:</strong> ${data.upload_info.original_filename}
+                            </div>
+                            <div class="link-item">
+                                <strong>Upload Time:</strong> ${data.upload_info.upload_timestamp}
+                            </div>
+                            <div class="link-item">
+                                <strong>Stored As:</strong> ${data.upload_info.permanent_filename}
+                            </div>
+                        </div>
+                        
+                        <div class="upload-links">
+                            <h4>🔗 Access Links:</h4>
+                            <div class="link-item">
+                                <strong>View Original Image:</strong> 
+                                <a href="${data.links.view_original}" target="_blank">Open Image</a>
+                            </div>
+                            <div class="link-item">
+                                <strong>Direct Upload Link:</strong> 
+                                <a href="${data.links.upload_folder_link}" target="_blank">Direct Access</a>
+                            </div>
+                            <div class="link-item">
+                                <strong>All Uploads List:</strong> 
+                                <a href="${data.links.list_all_uploads}" target="_blank">View All Uploads</a>
+                            </div>
+                        </div>
+                        
+                        <div class="upload-links">
+                            <h4>⚙️ Processing Info:</h4>
+                            <div class="link-item">
+                                <strong>Action:</strong> ${data.processing_info.action_performed}
+                            </div>
+                            <div class="link-item">
+                                <strong>Resize %:</strong> ${data.processing_info.resize_percentage || 'N/A'}
+                            </div>
+                            <div class="link-item">
+                                <strong>Processing Time:</strong> ${data.processing_info.processing_time}s
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 15px; padding: 10px; background: #fff3cd; border-radius: 5px;">
+                            <strong>💡 Note:</strong> The original image is now permanently stored in the uploads folder and accessible via the provided URL!
+                        </div>
+                    `;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultContent.innerHTML = `
+                        <p><strong>❌ Error:</strong> ${data.message || 'Upload failed'}</p>
+                        ${data.error ? `<p><strong>Details:</strong> ${data.error}</p>` : ''}
+                    `;
+                }
+                
+                resultDiv.style.display = 'block';
+                
+                // Restore button
+                button.textContent = originalText;
+                button.disabled = false;
+                
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultContent.innerHTML = `
+                    <p><strong>❌ Network Error:</strong> ${error.message}</p>
+                    <p>Make sure:</p>
+                    <ul>
+                        <li>Flask server is running on localhost:5000</li>
+                        <li>n8n is running on localhost:5678</li>
+                        <li>The webhook workflow is active in n8n</li>
+                    </ul>
+                `;
+                resultDiv.style.display = 'block';
+                
+                // Restore button
+                const button = this.querySelector('button');
+                button.textContent = 'Upload & Process Image';
+                button.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
