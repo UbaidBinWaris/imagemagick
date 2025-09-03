@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ImageMagick Web Tool</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="../static/styles.css">
 </head>
 <body>
     <div class="container">
@@ -30,14 +30,61 @@
             <p><strong>Alternative:</strong> If you have Chocolatey installed, run: <code>choco install imagemagick</code> (as administrator)</p>
         </div>
         
-        <div class="upload-section">
-            <div class="file-input-wrapper">
-                <input type="file" id="imageInput" class="file-input" accept="image/*" />
-                <label for="imageInput" class="file-input-button">
-                    📁 Choose Image File
-                </label>
+        <!-- Import/Export Section -->
+        <div class="import-export-section">
+            <div class="section-tabs">
+                <button class="tab-button active" onclick="switchTab('upload')">📁 Upload New</button>
+                <button class="tab-button" onclick="switchTab('import')">📥 Import Existing</button>
+                <button class="tab-button" onclick="switchTab('export')">📤 Export Images</button>
             </div>
-            <p style="margin-top: 10px; color: #666;">Supported formats: PNG, JPG, JPEG, GIF, BMP, TIFF, WebP (Max: 16MB)</p>
+            
+            <!-- Upload Tab -->
+            <div id="uploadTab" class="tab-content active">
+                <div class="file-input-wrapper">
+                    <input type="file" id="imageInput" class="file-input" accept="image/*" />
+                    <label for="imageInput" class="file-input-button">
+                        📁 Choose Image File
+                    </label>
+                </div>
+                <p style="margin-top: 10px; color: #666;">Supported formats: PNG, JPG, JPEG, GIF, BMP, TIFF, WebP (Max: 16MB)</p>
+            </div>
+            
+            <!-- Import Tab -->
+            <div id="importTab" class="tab-content">
+                <div class="import-controls">
+                    <button class="btn btn-secondary" onclick="loadAvailableImages()">
+                        🔄 Refresh Available Images
+                    </button>
+                    <div id="availableImagesContainer" class="available-images">
+                        <p>Click "Refresh Available Images" to load images from server</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Export Tab -->
+            <div id="exportTab" class="tab-content">
+                <div class="export-controls">
+                    <div class="control-group">
+                        <label for="exportFormat">Export Format:</label>
+                        <select id="exportFormat">
+                            <option value="png">PNG</option>
+                            <option value="jpg">JPG</option>
+                            <option value="gif">GIF</option>
+                            <option value="bmp">BMP</option>
+                            <option value="tiff">TIFF</option>
+                            <option value="webp">WebP</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="exportQuality">Quality (1-100):</label>
+                        <input type="number" id="exportQuality" value="90" min="1" max="100" />
+                    </div>
+                    <button class="btn btn-primary" onclick="exportCurrentImage()" id="exportButton" disabled>
+                        💾 Export Current Image
+                    </button>
+                    <p style="margin-top: 10px; color: #666;">Process an image first to enable export</p>
+                </div>
+            </div>
         </div>
         
         <div class="controls-grid">
@@ -144,6 +191,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script src="../static/app.js"></script>
 </body>
 </html>

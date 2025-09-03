@@ -467,46 +467,81 @@ def webhook_handler(webhook_id):
                 'code': 'IMAGEMAGICK_NOT_FOUND'
             }), 503
 
-        # Handle file upload from webhook
-        if 'image' not in request.files:
-            return jsonify({
-                'error': 'Bad request',
-                'message': 'No image file uploaded',
-                'code': 'NO_FILE'
-            }), 400
+        # Check for parameters
+        show_link = request.form.get('show_link', 'true').lower() in ['true', '1', 'yes']
+        use_existing_image = request.form.get('existing_image', '').strip()
+        
+        # Handle existing image from uploads folder OR new upload
+        if use_existing_image:
+            # Use existing image from uploads folder
+            safe_filename = sanitize_filename(use_existing_image)
+            if not safe_filename:
+                return jsonify({
+                    'error': 'Bad request',
+                    'message': 'Invalid existing image filename',
+                    'code': 'INVALID_FILENAME'
+                }), 400
+                
+            existing_path = os.path.join(UPLOAD_FOLDER, safe_filename)
+            if not os.path.exists(existing_path):
+                return jsonify({
+                    'error': 'Not found',
+                    'message': f'Image {safe_filename} not found in uploads folder',
+                    'code': 'IMAGE_NOT_FOUND'
+                }), 404
+                
+            # Use existing image
+            original_ext = safe_filename.rsplit('.', 1)[1].lower()
+            permanent_path = existing_path
+            permanent_filename = safe_filename
+            
+        else:
+            # Handle file upload from webhook (original functionality)
+            if 'image' not in request.files:
+                return jsonify({
+                    'error': 'Bad request',
+                    'message': 'No image file uploaded or existing_image parameter provided',
+                    'code': 'NO_FILE_OR_EXISTING'
+                }), 400
 
-        file = request.files['image']
-        if file.filename == '':
-            return jsonify({
-                'error': 'Bad request',
-                'message': 'No file selected',
-                'code': 'EMPTY_FILENAME'
-            }), 400
+            file = request.files['image']
+            if file.filename == '':
+                return jsonify({
+                    'error': 'Bad request',
+                    'message': 'No file selected',
+                    'code': 'EMPTY_FILENAME'
+                }), 400
 
-        # Sanitize filename
-        safe_filename = sanitize_filename(file.filename)
-        if not safe_filename or not allowed_file(safe_filename):
-            return jsonify({
-                'error': 'Bad request',
-                'message': f'File type not allowed. Supported: {", ".join(ALLOWED_EXTENSIONS)}',
-                'code': 'INVALID_FILE_TYPE'
-            }), 400
+            # Sanitize filename
+            safe_filename = sanitize_filename(file.filename)
+            if not safe_filename or not allowed_file(safe_filename):
+                return jsonify({
+                    'error': 'Bad request',
+                    'message': f'File type not allowed. Supported: {", ".join(ALLOWED_EXTENSIONS)}',
+                    'code': 'INVALID_FILE_TYPE'
+                }), 400
+
+            # Generate unique filenames for new upload
+            original_ext = safe_filename.rsplit('.', 1)[1].lower()
+            
+            # Save original image with timestamp for permanent access
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            unique_id = str(uuid.uuid4())
+            permanent_filename = f"{timestamp}_{unique_id}_{safe_filename}"
+            permanent_path = os.path.join(UPLOAD_FOLDER, permanent_filename)
+            
+            # Save uploaded file permanently
+            file.save(permanent_path)
 
         # Get processing parameters
         action = request.form.get('action', 'resize').lower().strip()
         resize_percentage = request.form.get('resize_percentage', '50')
         
-        # Generate unique filenames
-        unique_id = str(uuid.uuid4())
-        original_ext = safe_filename.rsplit('.', 1)[1].lower()
-        
-        # Save original image with timestamp for permanent access
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        permanent_filename = f"{timestamp}_{unique_id}_{safe_filename}"
-        permanent_path = os.path.join(UPLOAD_FOLDER, permanent_filename)
-        
-        # Save uploaded file permanently
-        file.save(permanent_path)
+        # Generate unique ID for processing
+        if not use_existing_image:
+            unique_id = str(uuid.uuid4())
+        else:
+            unique_id = str(uuid.uuid4())  # Generate new ID for processing session
         
         # Create temporary file for processing
         input_filename = f"{unique_id}_input.{original_ext}"
@@ -562,32 +597,41 @@ def webhook_handler(webhook_id):
         
         processing_time = round(time.time() - start_time, 3)
         
-        # Return response with both processed image and upload link
+        # Build response data
         response_data = {
             'success': True,
-            'message': 'Image uploaded and processed successfully',
+            'message': f'Image {"processed" if not use_existing_image else "processed from existing upload"} successfully',
             'data': {
                 'processed_image': img_base64,
-                'original_filename': safe_filename,
-                'upload_timestamp': timestamp,
+                'original_filename': permanent_filename.split('_', 2)[-1] if not use_existing_image else permanent_filename,
+                'upload_timestamp': datetime.now().strftime('%Y%m%d_%H%M%S'),
                 'processing_time_seconds': processing_time,
                 'action_performed': action,
-                'resize_percentage': resize_percentage if action == 'resize' else None
-            },
-            'links': {
-                'original_image_url': original_image_url,
-                'permanent_filename': permanent_filename,
-                'upload_folder_path': f"/uploads/{permanent_filename}"
+                'resize_percentage': resize_percentage if action == 'resize' else None,
+                'source': 'new_upload' if not use_existing_image else 'existing_image'
             },
             'metadata': {
                 'webhook_id': webhook_id,
                 'unique_id': unique_id,
                 'content_type': f'image/{original_ext}',
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'show_link_enabled': show_link
             }
         }
+        
+        # Add links only if show_link is enabled
+        if show_link:
+            response_data['links'] = {
+                'original_image_url': original_image_url,
+                'permanent_filename': permanent_filename,
+                'upload_folder_path': f"/uploads/{permanent_filename}"
+            }
+        else:
+            response_data['links'] = {
+                'note': 'Links disabled by show_link=false parameter'
+            }
 
-        logger.info(f"Webhook processed successfully: {unique_id}, file saved: {permanent_filename}")
+        logger.info(f"Webhook processed successfully: {unique_id}, source: {'new_upload' if not use_existing_image else 'existing'}, file: {permanent_filename}")
         return jsonify(response_data)
 
     except subprocess.CalledProcessError as e:
@@ -674,11 +718,41 @@ def list_uploads():
             'count': len(uploads),
             'uploads': uploads,
             'base_url': base_url,
-            'upload_folder': '/uploads/'
+            'upload_folder': '/uploads/',
+            'usage_note': 'Use filename in existing_image parameter to process existing uploads'
         })
         
     except Exception as e:
         logger.error(f"Error listing uploads: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'code': 'SERVER_ERROR'
+        }), 500
+
+@app.route('/api/uploads/names', methods=['GET'])
+@limiter.limit("10 per minute") 
+def list_upload_names():
+    """Get just the filenames of uploaded images for easy selection"""
+    try:
+        filenames = []
+        
+        if os.path.exists(UPLOAD_FOLDER):
+            for filename in os.listdir(UPLOAD_FOLDER):
+                if allowed_file(filename):
+                    filenames.append(filename)
+        
+        # Sort alphabetically
+        filenames.sort()
+        
+        return jsonify({
+            'success': True,
+            'count': len(filenames),
+            'filenames': filenames,
+            'usage': 'Use any filename in the existing_image parameter for webhook processing'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error listing upload names: {str(e)}")
         return jsonify({
             'error': 'Internal server error',
             'code': 'SERVER_ERROR'
@@ -791,13 +865,15 @@ def api_documentation():
                 'authentication': 'not required',
                 'rate_limit': '30 per minute',
                 'parameters': {
-                    'image': {'type': 'file', 'required': True, 'description': 'Image file to upload and process'},
+                    'image': {'type': 'file', 'required': False, 'description': 'Image file to upload and process (required if existing_image not provided)'},
+                    'existing_image': {'type': 'string', 'required': False, 'description': 'Filename of existing image in uploads folder to process'},
                     'action': {'type': 'string', 'default': 'resize', 'description': 'Processing action to perform'},
-                    'resize_percentage': {'type': 'string', 'default': '50', 'description': 'Resize percentage for resize action'}
+                    'resize_percentage': {'type': 'string', 'default': '50', 'description': 'Resize percentage for resize action'},
+                    'show_link': {'type': 'string', 'default': 'true', 'description': 'Whether to include image links in response (true/false)'}
                 },
                 'response': {
-                    'success': 'Returns processed image data and permanent upload link',
-                    'includes': 'original_image_url for permanent access to uploaded file'
+                    'success': 'Returns processed image data and optional permanent upload link',
+                    'includes': 'original_image_url for permanent access when show_link=true'
                 }
             },
             'GET /uploads/<filename>': {
@@ -806,7 +882,12 @@ def api_documentation():
                 'rate_limit': 'default'
             },
             'GET /api/uploads': {
-                'description': 'List all uploaded images with their access links',
+                'description': 'List all uploaded images with their access links and metadata',
+                'authentication': 'not required',
+                'rate_limit': '10 per minute'
+            },
+            'GET /api/uploads/names': {
+                'description': 'Get just the filenames of uploaded images for easy selection',
                 'authentication': 'not required',
                 'rate_limit': '10 per minute'
             },
