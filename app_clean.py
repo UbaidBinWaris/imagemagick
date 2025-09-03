@@ -2,26 +2,14 @@ import os
 import subprocess
 import logging
 import uuid
-import time
 from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from datetime import datetime
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 # --- Flask and Application Configuration ---
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
-
-# Security Configuration from environment variables
-SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
-API_KEY = os.getenv('API_KEY', 'ZWIHZc5e-SWR-XdIPykAZ3K6PncdnwBxa9VlZ9yuZ3M')
-app.config['SECRET_KEY'] = SECRET_KEY
-
-# File and Upload Configuration
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "outputs"
 DEFAULT_IMAGES_FOLDER = "src/default-image"
@@ -82,7 +70,7 @@ def get_default_images():
 # --- Flask Routes ---
 @app.route('/')
 def index():
-    """Serve the HTML frontend from templates."""
+    """Serve the HTML frontend from template."""
     return render_template('index.html')
 
 @app.route('/health', methods=['GET'])
@@ -130,9 +118,6 @@ def serve_default_image(filename):
 def process_image():
     """Process uploaded image with selected action."""
     try:
-        # Track processing time
-        start_time = time.time()
-        
         # Check if ImageMagick is installed
         imagemagick_installed, magick_cmd = check_imagemagick()
         if not imagemagick_installed:
