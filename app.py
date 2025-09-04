@@ -243,7 +243,7 @@ def process_image():
 
 @app.route('/process-default', methods=['POST'])
 def process_default_image():
-    """Process a default image with text overlay."""
+    """Process a default image with various operations (text, rotate, resize, etc.)."""
     try:
         # Check if ImageMagick is installed
         imagemagick_installed, magick_cmd = check_imagemagick()
@@ -256,14 +256,11 @@ def process_default_image():
             return jsonify({'error': 'No JSON data provided'}), 400
 
         default_image = data.get('default_image', '')
-        text = data.get('text', '')
+        operation = data.get('operation', 'text')  # Default operation is text
         
         # Validate inputs
         if not default_image:
             return jsonify({'error': 'default_image parameter is required'}), 400
-        
-        if not text:
-            return jsonify({'error': 'text parameter is required'}), 400
 
         # Check if default image exists
         input_path = os.path.join(DEFAULT_IMAGES_FOLDER, default_image)
@@ -273,31 +270,126 @@ def process_default_image():
         if not allowed_file(default_image):
             return jsonify({'error': f'Invalid file type for default image'}), 400
 
-        # Get text customization parameters
-        text_size = data.get('text_size', '120')
-        text_color = data.get('text_color', 'white')
-        text_font = data.get('text_font', 'Arial')
-        text_position = data.get('text_position', 'Center')
-        
         # Generate unique output filename
         unique_id = str(uuid.uuid4())
         original_ext = default_image.rsplit('.', 1)[1].lower()
         output_filename = f"default_output_{unique_id}.{original_ext}"
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
 
-        # Build ImageMagick command for text overlay
-        cmd = [
-            magick_cmd, 
-            input_path,
-            "-gravity", text_position,
-            "-font", text_font,
-            "-pointsize", text_size,
-            "-fill", text_color,
-            "-stroke", "black",
-            "-strokewidth", "2",
-            "-annotate", "+0+10", text,
-            output_path
-        ]
+        # Build ImageMagick command based on operation
+        cmd = [magick_cmd, input_path]
+        
+        if operation == "text" or (not operation and data.get('text')):
+            # Text overlay operation
+            text = data.get('text', '')
+            if not text:
+                return jsonify({'error': 'text parameter is required for text operation'}), 400
+            
+            text_size = data.get('text_size', '120')
+            text_color = data.get('text_color', 'white')
+            text_font = data.get('text_font', 'Arial')
+            text_position = data.get('text_position', 'Center')
+            
+            cmd.extend([
+                "-gravity", text_position,
+                "-font", text_font,
+                "-pointsize", text_size,
+                "-fill", text_color,
+                "-stroke", "black",
+                "-strokewidth", "2",
+                "-annotate", "+0+10", text
+            ])
+            
+        elif operation == "rotate":
+            # Rotation operation
+            rotation_angle = data.get('rotation_angle', '90')
+            cmd.extend(["-rotate", str(rotation_angle)])
+            
+        elif operation == "resize":
+            # Resize operation
+            resize_percentage = data.get('resize_percentage', '50')
+            width = data.get('width')
+            height = data.get('height')
+            
+            if width and height:
+                cmd.extend(["-resize", f"{width}x{height}"])
+            elif resize_percentage:
+                cmd.extend(["-resize", f"{resize_percentage}%"])
+            else:
+                cmd.extend(["-resize", "50%"])
+                
+        elif operation == "grayscale":
+            # Grayscale operation
+            cmd.extend(["-colorspace", "Gray"])
+            
+        elif operation == "blur":
+            # Blur operation
+            blur_radius = data.get('blur_radius', '0x1')
+            cmd.extend(["-blur", blur_radius])
+            
+        elif operation == "sharpen":
+            # Sharpen operation
+            sharpen_radius = data.get('sharpen_radius', '0x1')
+            cmd.extend(["-sharpen", sharpen_radius])
+            
+        elif operation == "sepia":
+            # Sepia tone operation
+            sepia_threshold = data.get('sepia_threshold', '80%')
+            cmd.extend(["-sepia-tone", sepia_threshold])
+            
+        elif operation == "negative":
+            # Negative operation
+            cmd.extend(["-negate"])
+            
+        elif operation == "flip":
+            # Vertical flip operation
+            cmd.extend(["-flip"])
+            
+        elif operation == "flop":
+            # Horizontal flip operation
+            cmd.extend(["-flop"])
+            
+        elif operation == "crop":
+            # Crop operation
+            crop_geometry = data.get('crop_geometry', '100x100+0+0')
+            cmd.extend(["-crop", crop_geometry])
+            
+        elif operation == "brightness":
+            # Brightness adjustment
+            brightness_level = data.get('brightness_level', '110')
+            cmd.extend(["-modulate", f"{brightness_level}"])
+            
+        elif operation == "contrast":
+            # Contrast adjustment
+            contrast_level = data.get('contrast_level', '1.2')
+            cmd.extend(["-sigmoidal-contrast", str(contrast_level)])
+            
+        elif operation == "border":
+            # Add border
+            border_width = data.get('border_width', '5')
+            border_color = data.get('border_color', 'black')
+            cmd.extend(["-bordercolor", border_color, "-border", border_width])
+            
+        elif operation == "composite":
+            # Multiple operations (can combine text with other effects)
+            operations = data.get('operations', [])
+            for op in operations:
+                op_type = op.get('type')
+                if op_type == "rotate":
+                    cmd.extend(["-rotate", str(op.get('rotation_angle', '90'))])
+                elif op_type == "grayscale":
+                    cmd.extend(["-colorspace", "Gray"])
+                elif op_type == "resize":
+                    if op.get('width') and op.get('height'):
+                        cmd.extend(["-resize", f"{op.get('width')}x{op.get('height')}"])
+                    else:
+                        cmd.extend(["-resize", f"{op.get('resize_percentage', '50')}%"])
+                # Add more composite operations as needed
+                
+        else:
+            return jsonify({'error': f'Invalid operation: {operation}. Supported operations: text, rotate, resize, grayscale, blur, sharpen, sepia, negative, flip, flop, crop, brightness, contrast, border, composite'}), 400
+
+        cmd.append(output_path)
 
         # Execute ImageMagick command
         logger.info(f"Executing command: {' '.join(cmd)}")
