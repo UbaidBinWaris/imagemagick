@@ -1,0 +1,180 @@
+{
+  "name": "ImageMagick API - Final Working Version",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-start",
+      "name": "Start Workflow",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:5000/health",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "ZWIHZc5e-SWR-XdIPykAZ3K6PncdnwBxa9VlZ9yuZ3M"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "health-check",
+      "name": "Health Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:5000/process-default",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "ZWIHZc5e-SWR-XdIPykAZ3K6PncdnwBxa9VlZ9yuZ3M"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "default_image": "Capture.PNG",
+          "text": "Hello from n8n!",
+          "text_position": "Center",
+          "text_size": "120",
+          "text_color": "white",
+          "text_font": "Arial"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "process-image",
+      "name": "Process Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "result-1",
+              "name": "status",
+              "value": "SUCCESS",
+              "type": "string"
+            },
+            {
+              "id": "result-2",
+              "name": "message",
+              "value": "Image processed successfully with text overlay",
+              "type": "string"
+            },
+            {
+              "id": "result-3",
+              "name": "api_health",
+              "value": "={{ $('Health Check').item(0).json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "result-4",
+              "name": "imagemagick_installed",
+              "value": "={{ $('Health Check').item(0).json.imagemagick_installed }}",
+              "type": "boolean"
+            },
+            {
+              "id": "result-5",
+              "name": "processed_image_size",
+              "value": "={{ $('Process Image').item(0).binary.data.fileSize }}",
+              "type": "number"
+            },
+            {
+              "id": "result-6",
+              "name": "image_mime_type",
+              "value": "={{ $('Process Image').item(0).binary.data.mimeType }}",
+              "type": "string"
+            },
+            {
+              "id": "result-7",
+              "name": "image_filename",
+              "value": "={{ $('Process Image').item(0).binary.data.fileName }}",
+              "type": "string"
+            },
+            {
+              "id": "result-8",
+              "name": "processing_timestamp",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "final-result",
+      "name": "Final Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [840, 400]
+    }
+  ],
+  "connections": {
+    "Start Workflow": {
+      "main": [
+        [
+          {
+            "node": "Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health Check": {
+      "main": [
+        [
+          {
+            "node": "Process Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Image": {
+      "main": [
+        [
+          {
+            "node": "Final Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-09-03T04:30:00.000Z",
+  "updatedAt": "2025-09-03T04:30:00.000Z",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["imagemagick", "final", "working"],
+  "triggerCount": 0,
+  "versionId": "final"
+}

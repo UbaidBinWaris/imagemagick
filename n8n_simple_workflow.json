@@ -1,0 +1,240 @@
+{
+  "name": "ImageMagick API - Upload and Process Image",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "config-1",
+              "name": "api_key",
+              "value": "ZWIHZc5e-SWR-XdIPykAZ3K6PncdnwBxa9VlZ9yuZ3M",
+              "type": "string"
+            },
+            {
+              "id": "config-2", 
+              "name": "base_url",
+              "value": "http://127.0.0.1:5000",
+              "type": "string"
+            },
+            {
+              "id": "config-3",
+              "name": "action",
+              "value": "text",
+              "type": "string"
+            },
+            {
+              "id": "config-4",
+              "name": "text",
+              "value": "n8n Processed Image!",
+              "type": "string"
+            },
+            {
+              "id": "config-5",
+              "name": "text_position",
+              "value": "Center",
+              "type": "string"
+            },
+            {
+              "id": "config-6",
+              "name": "text_size",
+              "value": "120",
+              "type": "string"
+            },
+            {
+              "id": "config-7",
+              "name": "text_color",
+              "value": "white",
+              "type": "string"
+            },
+            {
+              "id": "config-8",
+              "name": "text_font",
+              "value": "Arial",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "b2c3d4e5-f6g7-8901-2345-678901bcdefg",
+      "name": "Set API Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set API Config'].json.base_url }}/health",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $node['Set API Config'].json.api_key }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c3d4e5f6-g7h8-9012-3456-789012cdefgh",
+      "name": "Health Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $node['Set API Config'].json.base_url }}/process-default",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key", 
+              "value": "={{ $node['Set API Config'].json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "default_image": "Capture.PNG",
+          "text": "={{ $node['Set API Config'].json.text }}",
+          "text_position": "={{ $node['Set API Config'].json.text_position }}",
+          "text_size": "={{ $node['Set API Config'].json.text_size }}",
+          "text_color": "={{ $node['Set API Config'].json.text_color }}",
+          "text_font": "={{ $node['Set API Config'].json.text_font }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "d4e5f6g7-h8i9-0123-4567-890123defghi",
+      "name": "Process Default Image",
+      "type": "n8n-nodes-base.httpRequest", 
+      "typeVersion": 4.2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "result-1",
+              "name": "health_status",
+              "value": "={{ $node['Health Check'].json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "result-2",
+              "name": "imagemagick_installed",
+              "value": "={{ $node['Health Check'].json.imagemagick_installed }}",
+              "type": "boolean"
+            },
+            {
+              "id": "result-3",
+              "name": "processed_image_size",
+              "value": "={{ $node['Process Default Image'].binary?.data?.fileSize || 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "result-4",
+              "name": "content_type",
+              "value": "={{ $node['Process Default Image'].binary?.data?.mimeType || 'unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "result-5",
+              "name": "workflow_status",
+              "value": "completed_successfully",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "e5f6g7h8-i9j0-1234-5678-901234efghij",
+      "name": "Combine Results",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set API Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set API Config": {
+      "main": [
+        [
+          {
+            "node": "Health Check",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Process Default Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health Check": {
+      "main": [
+        [
+          {
+            "node": "Combine Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Default Image": {
+      "main": [
+        [
+          {
+            "node": "Combine Results", 
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-09-03T03:15:00.000Z",
+  "updatedAt": "2025-09-03T03:15:00.000Z",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["imagemagick", "api", "image-processing"],
+  "triggerCount": 0,
+  "versionId": "2"
+}
